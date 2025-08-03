@@ -1,3 +1,9 @@
+import os
+os.environ['STREAMLIT_SERVER_HEADLESS'] = 'true'
+os.environ['STREAMLIT_BROWSER_GATHER_USAGE_STATS'] = 'false'
+
+import streamlit as st
+# ... rest of your code
 import streamlit as st
 import asyncio
 from datetime import datetime, timedelta
