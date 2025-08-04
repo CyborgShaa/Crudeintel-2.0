@@ -1,57 +1,84 @@
+import sqlite3
+import json
+from datetime import datetime
 import os
-from supabase import create_client, Client
-from dotenv import load_dotenv
 
-load_dotenv()
+# Database file path
+DB_PATH = "crudeintel.db"
 
-# Initialize Supabase client
-supabase_url = os.getenv('SUPABASE_URL')
-supabase_key = os.getenv('SUPABASE_KEY')
-
-if not supabase_url or not supabase_key:
-    raise ValueError("Please set SUPABASE_URL and SUPABASE_KEY environment variables")
-
-supabase: Client = create_client(supabase_url, supabase_key)
+def init_database():
+    """Initialize SQLite database with news_articles table"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS news_articles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            description TEXT,
+            source TEXT,
+            link TEXT UNIQUE,
+            published_at TEXT,
+            summary TEXT,
+            sentiment TEXT,
+            alerted BOOLEAN DEFAULT FALSE,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+    print("✅ SQLite database initialized successfully")
 
 def insert_article(title, description, source, link, published_at, summary=None, sentiment=None):
     """Insert a new article into the database with debug logging"""
     try:
-        data = {
-            'title': title,
-            'description': description,
-            'source': source,
-            'link': link,
-            'published_at': published_at,
-            'summary': summary,
-            'sentiment': sentiment
-        }
-        
         print(f"💾 DEBUG: Inserting article '{title[:50]}...' from {source}")
-        response = supabase.table('news_articles').insert(data).execute()
         
-        if response.error:
-            print(f"❌ Insert failed: {response.error.message}")
-            return None
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT OR IGNORE INTO news_articles 
+            (title, description, source, link, published_at, summary, sentiment)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (title, description, source, link, published_at, summary, sentiment))
+        
+        if cursor.rowcount > 0:
+            print(f"✅ Insert succeeded: 1 record added")
+            conn.commit()
+            conn.close()
+            return True
         else:
-            print(f"✅ Insert succeeded: {len(response.data)} records added")
-            return response.data
+            print(f"📋 Article already exists (duplicate link)")
+            conn.close()
+            return False
             
     except Exception as e:
         print(f"❌ Exception during insert_article: {e}")
-        return None
+        return False
 
 def get_recent_articles(limit=50):
     """Get recent articles from database with debug logging"""
     try:
-        print(f"📚 DEBUG: Querying database for {limit} recent articles...")
-        response = supabase.table('news_articles').select('*').order('published_at', desc=True).limit(limit).execute()
+        print(f"📚 DEBUG: Querying SQLite for {limit} recent articles...")
         
-        if response.error:
-            print(f"❌ Error fetching articles: {response.error.message}")
-            return []
-            
-        print(f"📚 Retrieved {len(response.data)} articles from database")
-        return response.data
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row  # Enable dict-like access
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT * FROM news_articles 
+            ORDER BY published_at DESC 
+            LIMIT ?
+        ''', (limit,))
+        
+        rows = cursor.fetchall()
+        articles = [dict(row) for row in rows]
+        
+        print(f"📚 Retrieved {len(articles)} articles from SQLite database")
+        conn.close()
+        return articles
         
     except Exception as e:
         print(f"❌ Exception during get_recent_articles: {e}")
@@ -60,14 +87,14 @@ def get_recent_articles(limit=50):
 def check_article_exists(link):
     """Check if article already exists in database with debug logging"""
     try:
-        response = supabase.table('news_articles').select('id').eq('link', link).execute()
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
         
-        if response.error:
-            print(f"❌ Error checking article existence: {response.error.message}")
-            return False
-            
-        exists = len(response.data) > 0
+        cursor.execute('SELECT COUNT(*) FROM news_articles WHERE link = ?', (link,))
+        exists = cursor.fetchone()[0] > 0
+        
         print(f"🔎 Article exists check for '{link[:50]}...': {exists}")
+        conn.close()
         return exists
         
     except Exception as e:
@@ -78,34 +105,51 @@ def update_article_summary(article_id, summary, sentiment):
     """Update article with AI-generated summary and sentiment with debug logging"""
     try:
         print(f"🤖 DEBUG: Updating article {article_id} with AI summary and sentiment")
-        response = supabase.table('news_articles').update({
-            'summary': summary,
-            'sentiment': sentiment
-        }).eq('id', article_id).execute()
         
-        if response.error:
-            print(f"❌ Update failed: {response.error.message}")
-            return None
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE news_articles 
+            SET summary = ?, sentiment = ? 
+            WHERE id = ?
+        ''', (summary, sentiment, article_id))
+        
+        if cursor.rowcount > 0:
+            print(f"✅ Article {article_id} summary updated successfully")
+            conn.commit()
+            conn.close()
+            return True
+        else:
+            print(f"❌ No article found with ID {article_id}")
+            conn.close()
+            return False
             
-        print(f"✅ Article {article_id} summary updated successfully")
-        return response.data
-        
     except Exception as e:
         print(f"❌ Exception during update_article_summary: {e}")
-        return None
+        return False
 
 def get_unalerted_articles():
     """Get articles that haven't been alerted yet with debug logging"""
     try:
         print(f"📢 DEBUG: Querying for unalerted articles...")
-        response = supabase.table('news_articles').select('*').eq('alerted', False).neq('sentiment', 'Neutral').execute()
         
-        if response.error:
-            print(f"❌ Error fetching unalerted articles: {response.error.message}")
-            return []
-            
-        print(f"📢 Found {len(response.data)} unalerted articles")
-        return response.data
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT * FROM news_articles 
+            WHERE alerted = FALSE AND sentiment != 'Neutral'
+            ORDER BY published_at DESC
+        ''')
+        
+        rows = cursor.fetchall()
+        articles = [dict(row) for row in rows]
+        
+        print(f"📢 Found {len(articles)} unalerted articles")
+        conn.close()
+        return articles
         
     except Exception as e:
         print(f"❌ Exception during get_unalerted_articles: {e}")
@@ -115,39 +159,49 @@ def mark_article_alerted(article_id):
     """Mark article as alerted with debug logging"""
     try:
         print(f"📱 DEBUG: Marking article {article_id} as alerted")
-        response = supabase.table('news_articles').update({'alerted': True}).eq('id', article_id).execute()
         
-        if response.error:
-            print(f"❌ Mark alerted failed: {response.error.message}")
-            return None
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE news_articles 
+            SET alerted = TRUE 
+            WHERE id = ?
+        ''', (article_id,))
+        
+        if cursor.rowcount > 0:
+            print(f"✅ Article {article_id} marked as alerted")
+            conn.commit()
+            conn.close()
+            return True
+        else:
+            print(f"❌ No article found with ID {article_id}")
+            conn.close()
+            return False
             
-        print(f"✅ Article {article_id} marked as alerted")
-        return response.data
-        
     except Exception as e:
         print(f"❌ Exception during mark_article_alerted: {e}")
-        return None
+        return False
 
 def test_database_connection():
     """Test database connection and operations for debugging"""
     try:
-        print("🔍 Testing Supabase database connection...")
+        print("🔍 Testing SQLite database connection...")
         
-        # Check environment variables
-        print(f"🔑 SUPABASE_URL exists: {bool(supabase_url)}")
-        print(f"🔑 SUPABASE_KEY exists: {bool(supabase_key)}")
+        # Initialize database
+        init_database()
         
         # Test basic query
-        response = supabase.table('news_articles').select('*').limit(3).execute()
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM news_articles')
+        count = cursor.fetchone()[0]
+        conn.close()
         
-        if response.error:
-            print(f"❌ Connection test failed: {response.error.message}")
-            return False
-            
-        print(f"📊 Connection successful - found {len(response.data)} existing articles")
+        print(f"📊 Connection successful - found {count} existing articles")
         
         # Test insert with cleanup
-        test_article = {
+        test_article_data = {
             'title': f'Test Article {datetime.now().strftime("%H:%M:%S")}',
             'description': 'Test description',
             'source': 'Test Source',
@@ -155,22 +209,30 @@ def test_database_connection():
             'published_at': datetime.now().isoformat()
         }
         
-        insert_response = supabase.table('news_articles').insert(test_article).execute()
+        result = insert_article(**test_article_data)
         
-        if insert_response.error:
-            print(f"❌ Test insert failed: {insert_response.error.message}")
-            return False
+        if result:
+            print(f"✅ Test insert successful")
             
-        print(f"✅ Test insert successful")
-        
-        # Clean up test data
-        supabase.table('news_articles').delete().eq('source', 'Test Source').execute()
-        print("🧹 Test data cleaned up")
-        
-        return True
+            # Clean up test data
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM news_articles WHERE source = "Test Source"')
+            conn.commit()
+            conn.close()
+            print("🧹 Test data cleaned up")
+            
+            return True
+        else:
+            print(f"❌ Test insert failed")
+            return False
         
     except Exception as e:
         print(f"❌ Database connection test failed: {e}")
         return False
+
+# Initialize database on import
+init_database()
+
         
       
