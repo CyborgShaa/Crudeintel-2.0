@@ -40,7 +40,7 @@ def is_crude_related(text: str) -> bool:
     """Check if text contains crude oil related keywords"""
     return any(keyword in text.lower() for keyword in CRUDE_KEYWORDS)
 
-def fetch_rss_news(limit_per_feed=5):  # ✅ FIXED FUNCTION NAME
+def fetch_rss_news(limit_per_feed=6):  # ✅ FIXED FUNCTION NAME
     """Fetch crude oil news and save to database"""
     articles_added = 0
     total_processed = 0
