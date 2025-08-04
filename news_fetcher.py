@@ -7,37 +7,47 @@ from database import insert_article, check_article_exists
 # Set timezone for India
 tz = pytz.timezone("Asia/Kolkata")
 
-# ✅ Updated and verified RSS feeds
+# ✅ Complete RSS feeds with all our additions
 RSS_FEEDS = {
-    "OilPrice": "https://oilprice.com/rss/main",
-    "Reuters Energy": "https://feeds.reuters.com/reuters/USenergyNews", 
-    "World Oil": "https://www.worldoil.com/rss/",
+    # Tier 1 - High-volume industry sources
     "Rigzone": "https://www.rigzone.com/news/rss.asp",
     "Oil & Gas Journal": "https://www.ogj.com/rss",
+    "World Oil": "https://www.worldoil.com/rss",
+    "Oil & Gas 360": "https://oilandgas360.com/feed/",
+    
+    # Tier 2 - Market and financial sources  
+    "OilPrice": "https://oilprice.com/rss/main",
+    "Reuters Energy": "https://feeds.reuters.com/reuters/USenergyNews",
     "Energy Watch": "https://energywatch.com/service/rss",
-    "Economic Times Energy": "https://energy.economictimes.indiatimes.com/rss"
+    
+    # Tier 3 - Government and official sources
+    "EIA Today in Energy": "https://www.eia.gov/rss/todayinenergy.xml",
+    "API News": "https://www.api.org/news-policy-and-issues/rss",
+    
+    # Tier 4 - Regional sources
+    "Economic Times Oil & Gas": "https://energy.economictimes.indiatimes.com/rss/oil-and-gas"
 }
 
 # ✅ Expanded crude oil keywords
 CRUDE_KEYWORDS = [
     "crude oil", "crude", "oil", "brent", "wti", "opec", "opec+",
     "oil price", "oil futures", "oil market", "petroleum", "barrel",
-    "oil production", "oil supply", "oil inventories", "shale oil",
-    "oil drilling", "oil refinery", "oil rig", "oil pipeline"
+    "oil production", "oil supply", "oil inventories", "oil drilling",
+    "oil refinery", "oil rig", "oil pipeline", "shale oil"
 ]
 
 def is_crude_related(text: str) -> bool:
     """Check if text contains crude oil related keywords"""
     return any(keyword in text.lower() for keyword in CRUDE_KEYWORDS)
 
-def fetch_news(limit_per_feed=5):
+def fetch_rss_news(limit_per_feed=5):  # ✅ FIXED FUNCTION NAME
     """Fetch crude oil news and save to database"""
     articles_added = 0
     total_processed = 0
     
     # Headers to avoid being blocked
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     }
     
     print(f"🛢️ Starting news fetch from {len(RSS_FEEDS)} sources...")
@@ -75,7 +85,7 @@ def fetch_news(limit_per_feed=5):
                     
                     total_processed += 1
                     
-                    # Check if article already exists in database
+                    # Check if article already exists
                     if check_article_exists(link):
                         print(f"📋 Already exists: {title[:50]}...")
                         continue
@@ -115,38 +125,5 @@ def fetch_news(limit_per_feed=5):
     print(f"🏁 Fetch complete: {articles_added} new articles added from {total_processed} processed")
     return articles_added
 
-# Alternative function for testing without database
-def test_fetch_news():
-    """Test function to check if RSS feeds are working"""
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    }
-    
-    for source_name, url in RSS_FEEDS.items():
-        try:
-            print(f"Testing {source_name}...")
-            response = requests.get(url, headers=headers, timeout=10)
-            feed = feedparser.parse(response.content)
-            
-            if feed.entries:
-                crude_articles = []
-                for entry in feed.entries[:3]:
-                    title = entry.get('title', '')
-                    description = entry.get('description', '')
-                    if is_crude_related(title + " " + description):
-                        crude_articles.append(title)
-                
-                print(f"✅ {source_name}: {len(feed.entries)} total, {len(crude_articles)} crude-related")
-                for article in crude_articles:
-                    print(f"   📰 {article[:80]}...")
-            else:
-                print(f"❌ {source_name}: No entries found")
-                
-        except Exception as e:
-            print(f"❌ {source_name}: Error - {e}")
-        print()
-
-if __name__ == "__main__":
-    # Run test to check feeds
-    test_fetch_news()
-    
+# Keep the old function name as an alias for backward compatibility
+fetch_news = fetch_rss_news
