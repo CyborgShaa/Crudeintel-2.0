@@ -53,8 +53,8 @@ auto_refresh = st.sidebar.checkbox("🔄 Auto-refresh (5 min)", value=True)
 if st.sidebar.button("🔄 Fetch New Articles"):
     with st.spinner("Fetching latest news..."):
         try:
-            rss_count = fetch_rss_news()
-            api_count = fetch_newsapi_news()
+            rss_count = fetch_news()  # ✅ FIXED: Changed from fetch_rss_news()
+            api_count = fetch_newsapi_articles()  # ✅ FIXED: Changed from fetch_newsapi_news()
             total_added = rss_count + api_count
             if total_added > 0:
                 st.sidebar.success(f"✅ Added {total_added} new articles")
@@ -295,4 +295,5 @@ if auto_refresh:
         # Use a placeholder to refresh the countdown
         time.sleep(1)
         st.rerun()
+    
         
