@@ -37,57 +37,73 @@ CRUDE_KEYWORDS = [
 ]
 
 def is_crude_related(text: str) -> bool:
-    """Check if text contains crude oil related keywords"""
-    return any(keyword in text.lower() for keyword in CRUDE_KEYWORDS)
+    """Check if text contains crude oil related keywords with debug logging"""
+    result = any(keyword in text.lower() for keyword in CRUDE_KEYWORDS)
+    print(f"🔍 Keyword filter check for: '{text[:75]}...' → Result: {result}")
+    return result
 
-def fetch_rss_news(limit_per_feed=6):  # ✅ FIXED FUNCTION NAME
-    """Fetch crude oil news and save to database"""
+def fetch_rss_news(limit_per_feed=6):
+    """Fetch crude oil news and save to database with enhanced debug logging"""
     articles_added = 0
     total_processed = 0
     
-    # Headers to avoid being blocked
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     }
     
-    print(f"🛢️ Starting news fetch from {len(RSS_FEEDS)} sources...")
+    print(f"🛢️ DEBUG: Starting news fetch from {len(RSS_FEEDS)} sources...")
+    print(f"🔍 DEBUG: RSS sources: {list(RSS_FEEDS.keys())}")
     
     for source_name, url in RSS_FEEDS.items():
         try:
-            print(f"📡 Fetching from {source_name}: {url}")
+            print(f"\n📡 FETCHING: {source_name}")
+            print(f"🔗 URL: {url}")
             
-            # Use requests with headers to avoid blocking
             response = requests.get(url, headers=headers, timeout=15)
-            response.raise_for_status()
+            print(f"📊 HTTP Status: {response.status_code}")
             
-            # Parse the RSS feed
+            if response.status_code != 200:
+                print(f"❌ HTTP Error for {source_name}: {response.status_code}")
+                continue
+            
             feed = feedparser.parse(response.content)
+            print(f"📰 Raw entries found: {len(feed.entries)}")
             
             if not feed.entries:
-                print(f"⚠️ No entries found in {source_name}")
+                print(f"⚠️ No entries in feed for {source_name}")
                 continue
-                
-            print(f"✅ Found {len(feed.entries)} entries in {source_name}")
             
-            for entry in feed.entries[:limit_per_feed]:
+            crude_related_count = 0
+            for i, entry in enumerate(feed.entries[:limit_per_feed]):
                 try:
+                    print(f"\n--- Processing Article {i+1} from {source_name} ---")
+                    
                     title = entry.get('title', '').strip()
                     description = entry.get('description', entry.get('summary', '')).strip()
                     link = entry.get('link', '').strip()
                     
+                    print(f"📰 Title: {title}")
+                    print(f"🔗 Link: {link[:80]}...")
+                    
                     if not title or not link:
+                        print(f"❌ Missing title or link - SKIPPED")
                         continue
                     
-                    # Filter for crude oil related content
+                    # Test keyword filter with debug output
                     combined_text = title + " " + description
                     if not is_crude_related(combined_text):
+                        print(f"❌ Failed keyword filter - SKIPPED")
                         continue
                     
+                    crude_related_count += 1
                     total_processed += 1
                     
                     # Check if article already exists
-                    if check_article_exists(link):
-                        print(f"📋 Already exists: {title[:50]}...")
+                    exists = check_article_exists(link)
+                    print(f"🔄 Duplicate check result: {'EXISTS' if exists else 'NEW'}")
+                    
+                    if exists:
+                        print(f"📋 Article already exists - SKIPPED")
                         continue
                     
                     # Parse published date
@@ -99,7 +115,10 @@ def fetch_rss_news(limit_per_feed=6):  # ✅ FIXED FUNCTION NAME
                     except:
                         published_at = datetime.now(timezone.utc)
                     
-                    # Insert article into database
+                    print(f"📅 Published date: {published_at}")
+                    
+                    # Attempt database insertion
+                    print(f"💾 Attempting database insert...")
                     result = insert_article(
                         title=title,
                         description=description,
@@ -110,20 +129,25 @@ def fetch_rss_news(limit_per_feed=6):  # ✅ FIXED FUNCTION NAME
                     
                     if result:
                         articles_added += 1
-                        print(f"✅ Added: {title[:60]}...")
+                        print(f"✅ SUCCESS: Article inserted into database!")
                     else:
-                        print(f"❌ Failed to insert: {title[:50]}...")
+                        print(f"❌ FAILED: Database insert returned False")
                         
                 except Exception as e:
                     print(f"❌ Error processing entry: {e}")
                     continue
+            
+            print(f"📊 {source_name} SUMMARY: {crude_related_count} crude-related out of {len(feed.entries[:limit_per_feed])} articles")
                     
         except Exception as e:
             print(f"❌ Error fetching from {source_name}: {e}")
             continue
     
-    print(f"🏁 Fetch complete: {articles_added} new articles added from {total_processed} processed")
+    print(f"\n🏁 FINAL RESULT: {articles_added} articles successfully added to database")
+    print(f"📊 TOTAL PROCESSED: {total_processed} articles passed all filters")
     return articles_added
 
 # Keep the old function name as an alias for backward compatibility
 fetch_news = fetch_rss_news
+
+
