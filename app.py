@@ -10,7 +10,8 @@ import time
 # Import your custom modules
 try:
     from database import get_recent_articles
-    from news_fetcher import fetch_news, fetch_newsapi_news
+    from news_fetcher import fetch_news
+    from newsapi_fetcher import fetch_newsapi_articles
     from summarizer import process_unanalyzed_articles
     from telegram_alerts import send_alerts, send_test_alert
 except ImportError as e:
