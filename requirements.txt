@@ -1,7 +1,7 @@
 streamlit
 supabase
 python-dotenv
-requests
+requests==2.31.0
 feedparser
 google-generativeai
 python-telegram-bot
