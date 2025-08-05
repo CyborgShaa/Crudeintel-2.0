@@ -33,6 +33,10 @@ CRUDE_KEYWORDS = [
     "oil price", "oil futures", "oil market", "petroleum", "barrel",
     "oil production", "oil supply", "oil inventories", "oil drilling",
     "oil refinery", "oil rig", "oil pipeline", "shale oil"
+
+    # Geopolitical, policy & infrastructure
+    "oil sanctions", "oil embargo", "oil pipeline", "crude demand",
+    "oil refinery", "oil rig", "petroleum", "middle east", "iran", "usa crude"
 ]
 
 def is_crude_related(text: str) -> bool:
