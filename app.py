@@ -76,7 +76,7 @@ def fetch_and_analyze_news():
         
         # Filter to last 1 hour only
         recent_articles = filter_last_hour_articles(all_articles)
-        st.write(f"⏰ Recent (last 1 hour): {len(recent_articles)} articles")
+        st.write(f"⏰ Recent (last 3 hour): {len(recent_articles)} articles")
         
         # Remove duplicates
         unique_articles = {}
