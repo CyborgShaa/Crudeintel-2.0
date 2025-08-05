@@ -168,7 +168,7 @@ except Exception as e:
     st.error(f"Error loading articles: {e}")
     articles = []
 
-# Statistics
+# Statistics with safe access
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
@@ -181,7 +181,8 @@ with col2:
 with col3:
     if articles:
         try:
-            recent = len([a for a in articles if (datetime.now(timezone.utc) - datetime.fromisoformat(a['published_at'].replace('Z', '+00:00'))).days < 1])
+            # Safe access to published_at with error handling
+            recent = len([a for a in articles if a.get('published_at') and (datetime.now(timezone.utc) - datetime.fromisoformat(a.get('published_at', '').replace('Z', '+00:00'))).days < 1])
             st.metric("📅 Last 24h", recent)
         except:
             st.metric("📅 Last 24h", "N/A")
@@ -215,13 +216,14 @@ if articles:
         )
 
     with col2:
-        sources = ["All"] + sorted(list(set([a['source'] for a in articles if a.get('source')])))
+        # Safe access for sources filter
+        sources = ["All"] + sorted(list(set([a.get('source', 'Unknown') for a in articles if a.get('source')])))
         source_filter = st.selectbox("📡 Filter by Source", sources)
 
     with col3:
         limit = st.selectbox("📊 Show Articles", [10, 25, 50, 100], index=1)
 
-    # Apply filters
+    # Apply filters with safe access
     filtered_articles = articles
 
     if sentiment_filter != "All":
@@ -233,10 +235,10 @@ if articles:
     if source_filter != "All":
         filtered_articles = [a for a in filtered_articles if a.get('source') == source_filter]
 
-    # Sort by published date (newest first)
+    # Sort by published date (newest first) with safe access
     try:
         filtered_articles = sorted(filtered_articles, 
-                                 key=lambda x: datetime.fromisoformat(x['published_at'].replace('Z', '+00:00')), 
+                                 key=lambda x: datetime.fromisoformat(x.get('published_at', '1970-01-01T00:00:00Z').replace('Z', '+00:00')), 
                                  reverse=True)
     except:
         pass  # Keep original order if sorting fails
@@ -244,75 +246,84 @@ if articles:
     # Limit results
     filtered_articles = filtered_articles[:limit]
 
-    # Display articles
+    # Display articles with safe access
     if filtered_articles:
         st.markdown(f"📊 Showing **{len(filtered_articles)}** articles")
         
         for i, article in enumerate(filtered_articles):
+            # Safe access with defaults - prevents KeyError
+            title = article.get('title', 'No Title')
+            link = article.get('link', '#')
+            sentiment = article.get('sentiment', 'Pending')
+            summary = article.get('summary', '')
+            description = article.get('description', '')
+            source = article.get('source', 'Unknown')
+            published_at = article.get('published_at', 'Unknown')
+            
             # Sentiment emoji
             sentiment_emoji = {
                 'Bullish': '🟢',
                 'Bearish': '🔴',
                 'Neutral': '⚪'
             }
-            
-            emoji = sentiment_emoji.get(article.get('sentiment'), '⚪')
+            emoji = sentiment_emoji.get(sentiment, '⚪')
             
             # Article container with better styling
             with st.container():
                 if i > 0:  # Don't add divider before first article
                     st.markdown("---")
                 
-                # Title and sentiment
+                # Title and sentiment - safe access
                 col1, col2 = st.columns([4, 1])
                 
                 with col1:
-                    if article.get('link'):
-                        st.markdown(f"### [{article['title']}]({article['link']})")
+                    if link and link != '#':
+                        st.markdown(f"### [{title}]({link})")
                     else:
-                        st.markdown(f"### {article['title']}")
+                        st.markdown(f"### {title}")
                 
                 with col2:
-                    if article.get('sentiment'):
-                        st.markdown(f"## {emoji} {article['sentiment']}")
-                    else:
-                        st.markdown("## ⚪ Pending")
+                    st.markdown(f"## {emoji} {sentiment}")
                 
-                # Summary or description
-                if article.get('summary'):
-                    st.markdown(f"**🤖 AI Summary:** {article['summary']}")
-                elif article.get('description'):
-                    description = article['description']
+                # Summary or description - safe access
+                if summary:
+                    st.markdown(f"**🤖 AI Summary:** {summary}")
+                elif description:
                     if len(description) > 300:
                         description = description[:300] + "..."
                     st.markdown(f"**📝 Description:** {description}")
                 else:
                     st.markdown("*No description available*")
                 
-                # Metadata with better formatting
+                # Metadata with better formatting and safe access
                 try:
-                    published_date = datetime.fromisoformat(article['published_at'].replace('Z', '+00:00'))
-                    time_ago = datetime.now(timezone.utc) - published_date
-                    
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        st.caption(f"📡 **Source:** {article.get('source', 'Unknown')}")
-                    
-                    with col2:
-                        st.caption(f"🕒 **Published:** {published_date.strftime('%b %d, %Y %H:%M UTC')}")
-                    
-                    with col3:
-                        if time_ago.days > 0:
-                            st.caption(f"⏰ **Age:** {time_ago.days} day{'s' if time_ago.days != 1 else ''} ago")
-                        elif time_ago.seconds > 3600:
-                            hours = time_ago.seconds // 3600
-                            st.caption(f"⏰ **Age:** {hours} hour{'s' if hours != 1 else ''} ago")
-                        else:
-                            minutes = max(1, time_ago.seconds // 60)
-                            st.caption(f"⏰ **Age:** {minutes} min ago")
-                except Exception as e:
-                    st.caption(f"📅 **Published:** {article.get('published_at', 'Unknown')}")
+                    if published_at != 'Unknown':
+                        published_date = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
+                        time_ago = datetime.now(timezone.utc) - published_date
+                        
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.caption(f"📡 **Source:** {source}")
+                        
+                        with col2:
+                            st.caption(f"🕒 **Published:** {published_date.strftime('%b %d, %Y %H:%M UTC')}")
+                        
+                        with col3:
+                            if time_ago.days > 0:
+                                st.caption(f"⏰ **Age:** {time_ago.days} day{'s' if time_ago.days != 1 else ''} ago")
+                            elif time_ago.seconds > 3600:
+                                hours = time_ago.seconds // 3600
+                                st.caption(f"⏰ **Age:** {hours} hour{'s' if hours != 1 else ''} ago")
+                            else:
+                                minutes = max(1, time_ago.seconds // 60)
+                                st.caption(f"⏰ **Age:** {minutes} min ago")
+                    else:
+                        st.caption(f"📡 **Source:** {source}")
+                        st.caption(f"📅 **Published:** {published_at}")
+                except Exception:
+                    st.caption(f"📡 **Source:** {source}")
+                    st.caption(f"📅 **Published:** {published_at}")
 
     else:
         st.info("🔍 No articles found with the selected filters. Try adjusting your filter criteria.")
@@ -355,6 +366,7 @@ if auto_refresh:
         # Use a placeholder to refresh the countdown
         time.sleep(1)
         st.rerun()
+                            
                         
                     
         
