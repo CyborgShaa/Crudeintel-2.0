@@ -9,7 +9,7 @@ import time
 
 # Page config MUST be first Streamlit command
 st.set_page_config(
-    page_title="CrudeIntel 2.0 - Enhanced",
+    page_title="CrudeIntel 2.0 - Multi-Bot Enhanced",
     page_icon="🛢️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -116,8 +116,8 @@ def fetch_and_analyze_news():
         return final_articles
 
 # Title and header
-st.title("🛢️ CrudeIntel 2.0 Enhanced")
-st.markdown("**Real-time Crude Oil Intelligence - Last 1 Hour Focus**")
+st.title("🛢️ CrudeIntel 2.0 Multi-Bot Enhanced")
+st.markdown("**Real-time Crude Oil Intelligence - Multi-Bot Telegram Alerts**")
 
 # Enhanced status
 col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
@@ -132,48 +132,56 @@ with col4:
     st.caption(f"Updated: {datetime.now().strftime('%H:%M:%S')}")
 
 # Sidebar controls
-st.sidebar.header("🎛️ Enhanced Controls")
+st.sidebar.header("🎛️ Multi-Bot Controls")
 
 # Auto-alerts toggle
 st.session_state.auto_alerts_enabled = st.sidebar.checkbox(
-    "🚨 Auto Telegram Alerts", 
+    "🚨 Auto Multi-Bot Alerts", 
     value=st.session_state.auto_alerts_enabled,
-    help="Automatically send alerts for recent Bullish/Bearish news"
+    help="Automatically send alerts to all configured Telegram bots for Bullish/Bearish news"
 )
 
 # Manual fetch and alert button
-if st.sidebar.button("🔄 Fetch & Auto Alert"):
+if st.sidebar.button("🔄 Fetch & Send Multi-Bot Alerts"):
     articles = fetch_and_analyze_news()
     st.session_state.articles_cache = articles
     st.session_state.last_fetch_time = datetime.now()
     
     # Send automatic alerts if enabled
     if st.session_state.auto_alerts_enabled and articles:
-        with st.spinner("📱 Sending automatic alerts..."):
+        with st.spinner("📱 Sending multi-bot alerts..."):
             alerts_sent = asyncio.run(send_automatic_alerts(articles))
             if alerts_sent > 0:
-                st.sidebar.success(f"📱 Sent {alerts_sent} automatic alerts!")
+                st.sidebar.success(f"📱 Sent {alerts_sent} alerts across all bots!")
             else:
                 st.sidebar.info("📱 No alerts needed (neutral/old articles)")
 
-# Manual test alert
-if st.sidebar.button("🧪 Test Enhanced Alert"):
-    with st.spinner("📱 Testing enhanced alert format..."):
+# Manual test alert to all bots
+if st.sidebar.button("🧪 Test All Bots"):
+    with st.spinner("📱 Testing all telegram bots..."):
         success = asyncio.run(send_test_alert())
         if success:
-            st.sidebar.success("✅ Enhanced test alert sent!")
+            st.sidebar.success("✅ Test alerts sent to all configured bots!")
         else:
-            st.sidebar.error("❌ Test alert failed")
+            st.sidebar.error("❌ Some or all test alerts failed")
 
-# Alert statistics
+# Enhanced Alert statistics with multi-bot info
 try:
     alert_stats = get_alert_stats()
     st.sidebar.markdown("---")
-    st.sidebar.markdown("### 📊 Alert Stats")
+    st.sidebar.markdown("### 📊 Multi-Bot Alert Stats")
     st.sidebar.caption(f"• Total alerted: {alert_stats['total_alerted']}")
+    st.sidebar.caption(f"• Configured bots: {alert_stats['configured_bots']}")
     st.sidebar.caption(f"• Cache size: {alert_stats['cache_size']}")
-except:
-    pass
+    
+    # Bot status indicators
+    if alert_stats['configured_bots'] > 0:
+        st.sidebar.success(f"🤖 {alert_stats['configured_bots']} bots ready")
+    else:
+        st.sidebar.error("⚠️ No bots configured")
+        
+except Exception as e:
+    st.sidebar.error(f"Stats error: {e}")
 
 # Auto-fetch on page load (controlled, only once per session or every 15 minutes)
 current_time = datetime.now()
@@ -195,11 +203,14 @@ if should_auto_fetch:
     st.session_state.articles_cache = articles
     st.session_state.last_fetch_time = current_time
     
-    # Auto-send alerts if enabled
+    # Auto-send multi-bot alerts if enabled
     if st.session_state.auto_alerts_enabled and articles:
-        alerts_sent = asyncio.run(send_automatic_alerts(articles))
-        if alerts_sent > 0:
-            st.success(f"📱 Auto-sent {alerts_sent} alerts for recent news!")
+        try:
+            alerts_sent = asyncio.run(send_automatic_alerts(articles))
+            if alerts_sent > 0:
+                st.success(f"📱 Auto-sent {alerts_sent} alerts to all configured bots!")
+        except Exception as e:
+            st.error(f"Auto-alert error: {e}")
 
 # Get articles from cache
 articles = st.session_state.articles_cache
@@ -217,7 +228,7 @@ if articles:
     
     with col3:
         alertable = len([a for a in articles if a.get('sentiment') in ['Bullish', 'Bearish']])
-        st.metric("🚨 Alert Worthy", alertable)
+        st.metric("🚨 Multi-Bot Ready", alertable)
     
     with col4:
         bullish = len([a for a in articles if a.get('sentiment') == 'Bullish'])
@@ -321,41 +332,55 @@ if articles:
                     st.caption(f"📡 **Source:** {source}")
                 with col2:
                     if sentiment in ['Bullish', 'Bearish']:
-                        st.caption("🚨 **Alert Sent**")
+                        st.caption("🚨 **Multi-Bot Alert**")
                     else:
                         st.caption("😐 **No Alert**")
     else:
         st.info("🔍 No articles match current filters.")
 
 else:
-    st.info("🔄 No recent articles found. Click 'Fetch & Auto Alert' to load fresh news!")
+    st.info("🔄 No recent articles found. Click 'Fetch & Send Multi-Bot Alerts' to load fresh news!")
 
-# Show cache info
+# Enhanced cache info with multi-bot status
 if st.session_state.last_fetch_time:
     cache_age = (datetime.now() - st.session_state.last_fetch_time).total_seconds() / 60
     st.sidebar.markdown("---")
-    st.sidebar.markdown("### ⏰ Cache Info")
+    st.sidebar.markdown("### ⏰ Cache & Bot Info")
     st.sidebar.caption(f"• Last fetch: {cache_age:.1f} min ago")
     st.sidebar.caption(f"• Articles cached: {len(st.session_state.articles_cache)}")
+    
+    # Show environment status
+    bot_tokens = [
+        ("Bot 1", "TELEGRAM_BOT_TOKEN_1"),
+        ("Bot 2", "TELEGRAM_BOT_TOKEN_2"), 
+        ("Bot 3", "TELEGRAM_BOT_TOKEN_3")
+    ]
+    
+    st.sidebar.markdown("### 🤖 Bot Status")
+    for bot_name, env_var in bot_tokens:
+        if os.getenv(env_var):
+            st.sidebar.caption(f"• {bot_name}: ✅ Configured")
+        else:
+            st.sidebar.caption(f"• {bot_name}: ❌ Missing")
 
 # Enhanced footer
 st.markdown("---")
-st.markdown("### 🚀 Enhanced Features")
+st.markdown("### 🚀 Multi-Bot Enhanced Features")
 col1, col2 = st.columns(2)
 
 with col1:
     st.markdown("""
     - **⏰ Last Hour Focus**: Only shows news from past 60 minutes
-    - **🚨 Auto Telegram Alerts**: Beautiful formatted alerts
+    - **🚨 Multi-Bot Alerts**: Simultaneous alerts to 3+ bots
     - **🤖 Real-time AI**: Gemini analysis on every article
     """)
 
 with col2:
     st.markdown("""
-    - **🚫 Zero Duplicates**: Smart duplicate prevention
-    - **📱 Enhanced Format**: Professional alert styling
-    - **⚡ 15-min Ready**: Perfect for external cron automation
+    - **🚫 Zero Duplicates**: Smart duplicate prevention across all bots
+    - **📱 Professional Format**: Beautiful alert styling for all bots
+    - **🛡️ Redundant Delivery**: Multiple bots ensure alert delivery
     """)
 
-# Auto-refresh info
-st.caption(f"🔄 Auto-refresh: Every 15 minutes | Manual refresh available anytime")
+# Auto-refresh info with multi-bot mention
+st.caption(f"🔄 Auto-refresh: Every 15 minutes with multi-bot alerting | Manual refresh available anytime")
