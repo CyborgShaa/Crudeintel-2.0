@@ -7,28 +7,13 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 import time
 
-if 'last_refresh' not in st.session_state:
-    st.session_state['last_refresh'] = 0
-
-AUTO_REFRESH_INTERVAL = 300  # 5 mins
-auto_refresh = st.sidebar.checkbox("Auto-refresh (5 min)", True)
-
-current_time = time.time()
-time_since_last = current_time - st.session_state['last_refresh']
-
-# Conditionally rerun, but **call rerun only once and then stop execution immediately**
-if auto_refresh and time_since_last > AUTO_REFRESH_INTERVAL:
-    st.session_state['last_refresh'] = current_time
-    st.experimental_rerun()
-
-# Show countdown if not rerunning
-if auto_refresh and time_since_last <= AUTO_REFRESH_INTERVAL:
-    time_left = AUTO_REFRESH_INTERVAL - time_since_last
-    minutes = int(time_left // 60)
-    seconds = int(time_left % 60)
-    st.sidebar.caption(f"Next auto-refresh in: {minutes}:{seconds:02d}")
-
-# Put any further code **after** this block, NOT below the rerun call
+# Page config MUST be first Streamlit command
+st.set_page_config(
+    page_title="CrudeIntel 2.0 - Enhanced",
+    page_icon="🛢️",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 # Import modules
 try:
@@ -40,15 +25,7 @@ except ImportError as e:
     st.error(f"Error importing modules: {e}")
     st.stop()
 
-# Page config
-st.set_page_config(
-    page_title="CrudeIntel 2.0 - Enhanced",
-    page_icon="🛢️",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Session state
+# Initialize session state
 if 'articles_cache' not in st.session_state:
     st.session_state.articles_cache = []
 if 'last_fetch_time' not in st.session_state:
@@ -164,7 +141,7 @@ st.session_state.auto_alerts_enabled = st.sidebar.checkbox(
     help="Automatically send alerts for recent Bullish/Bearish news"
 )
 
-# Fetch and Alert button
+# Manual fetch and alert button
 if st.sidebar.button("🔄 Fetch & Auto Alert"):
     articles = fetch_and_analyze_news()
     st.session_state.articles_cache = articles
@@ -178,8 +155,6 @@ if st.sidebar.button("🔄 Fetch & Auto Alert"):
                 st.sidebar.success(f"📱 Sent {alerts_sent} automatic alerts!")
             else:
                 st.sidebar.info("📱 No alerts needed (neutral/old articles)")
-    
-    st.rerun()
 
 # Manual test alert
 if st.sidebar.button("🧪 Test Enhanced Alert"):
@@ -191,29 +166,40 @@ if st.sidebar.button("🧪 Test Enhanced Alert"):
             st.sidebar.error("❌ Test alert failed")
 
 # Alert statistics
-alert_stats = get_alert_stats()
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 📊 Alert Stats")
-st.sidebar.caption(f"• Total alerted: {alert_stats['total_alerted']}")
-st.sidebar.caption(f"• Cache size: {alert_stats['cache_size']}")
+try:
+    alert_stats = get_alert_stats()
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 📊 Alert Stats")
+    st.sidebar.caption(f"• Total alerted: {alert_stats['total_alerted']}")
+    st.sidebar.caption(f"• Cache size: {alert_stats['cache_size']}")
+except:
+    pass
 
-# Auto-fetch on page load (but only if cache is empty or very old)
-if (not st.session_state.articles_cache or 
-    not st.session_state.last_fetch_time or 
-    (datetime.now() - st.session_state.last_fetch_time).seconds > 900):  # 15 minutes
-    
-    st.info("🔄 Auto-fetching latest news from last 1 hour...")
+# Auto-fetch on page load (controlled, only once per session or every 15 minutes)
+current_time = datetime.now()
+should_auto_fetch = False
+
+if not st.session_state.articles_cache:
+    should_auto_fetch = True
+    reason = "No cached articles"
+elif not st.session_state.last_fetch_time:
+    should_auto_fetch = True
+    reason = "No previous fetch time"
+elif (current_time - st.session_state.last_fetch_time).total_seconds() > 900:  # 15 minutes
+    should_auto_fetch = True
+    reason = "Cache expired (15+ minutes old)"
+
+if should_auto_fetch:
+    st.info(f"🔄 Auto-fetching latest news ({reason})...")
     articles = fetch_and_analyze_news()
     st.session_state.articles_cache = articles
-    st.session_state.last_fetch_time = datetime.now()
+    st.session_state.last_fetch_time = current_time
     
     # Auto-send alerts if enabled
     if st.session_state.auto_alerts_enabled and articles:
         alerts_sent = asyncio.run(send_automatic_alerts(articles))
         if alerts_sent > 0:
             st.success(f"📱 Auto-sent {alerts_sent} alerts for recent news!")
-    
-    st.rerun()
 
 # Get articles from cache
 articles = st.session_state.articles_cache
@@ -342,7 +328,15 @@ if articles:
         st.info("🔍 No articles match current filters.")
 
 else:
-    st.info("🔄 No recent articles found. News will auto-fetch on next page load!")
+    st.info("🔄 No recent articles found. Click 'Fetch & Auto Alert' to load fresh news!")
+
+# Show cache info
+if st.session_state.last_fetch_time:
+    cache_age = (datetime.now() - st.session_state.last_fetch_time).total_seconds() / 60
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### ⏰ Cache Info")
+    st.sidebar.caption(f"• Last fetch: {cache_age:.1f} min ago")
+    st.sidebar.caption(f"• Articles cached: {len(st.session_state.articles_cache)}")
 
 # Enhanced footer
 st.markdown("---")
@@ -360,8 +354,8 @@ with col2:
     st.markdown("""
     - **🚫 Zero Duplicates**: Smart duplicate prevention
     - **📱 Enhanced Format**: Professional alert styling
-    - **⚡ 15-min Ready**: Perfect for cron job automation
+    - **⚡ 15-min Ready**: Perfect for external cron automation
     """)
 
 # Auto-refresh info
-st.caption(f"🔄 Auto-fetch enabled - checks every 15 minutes for fresh news")
+st.caption(f"🔄 Auto-refresh: Every 15 minutes | Manual refresh available anytime")
