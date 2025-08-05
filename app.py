@@ -7,12 +7,14 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 import time
 import hashlib
+import json
 
-# Import your custom modules (no database needed)
+# Import your custom modules
 try:
-    from news_fetcher import fetch_all_news
-    from summarizer import analyze_article_sentiment
-    from telegram_alerts import send_recent_alerts
+    from news_fetcher import fetch_news_live
+    from newsapi_fetcher import fetch_newsapi_articles_live  
+    from summarizer import analyze_article_live
+    from telegram_alerts import send_alert_live, send_test_alert
 except ImportError as e:
     st.error(f"Error importing modules: {e}")
     st.stop()
@@ -25,129 +27,206 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Initialize session state for caching and auto-refresh
-if 'last_refresh' not in st.session_state:
-    st.session_state.last_refresh = 0
-if 'cached_articles' not in st.session_state:
-    st.session_state.cached_articles = []
-if 'processing_complete' not in st.session_state:
-    st.session_state.processing_complete = False
+# Global variables for session state
+if 'articles_cache' not in st.session_state:
+    st.session_state.articles_cache = []
+if 'last_fetch_time' not in st.session_state:
+    st.session_state.last_fetch_time = None
+if 'alerted_articles' not in st.session_state:
+    st.session_state.alerted_articles = set()
+
+def get_article_id(article):
+    """Generate unique ID for article to prevent duplicates"""
+    return hashlib.md5((article.get('title', '') + article.get('link', '')).encode()).hexdigest()
+
+def is_recent_article(published_at_str, hours_limit=1):
+    """Check if article is within the specified hours limit"""
+    try:
+        if not published_at_str:
+            return False
+        
+        published_date = datetime.fromisoformat(published_at_str.replace('Z', '+00:00'))
+        time_diff = datetime.now(timezone.utc) - published_date
+        return time_diff.total_seconds() / 3600 <= hours_limit
+    except:
+        return False
+
+def fetch_and_analyze_news():
+    """Fetch news from all sources and analyze with AI"""
+    with st.spinner("🔄 Fetching latest crude oil news..."):
+        all_articles = []
+        
+        # Fetch from RSS sources
+        st.write("📡 Fetching RSS sources...")
+        try:
+            rss_articles = fetch_news_live()
+            all_articles.extend(rss_articles)
+            st.write(f"📰 RSS: {len(rss_articles)} articles")
+        except Exception as e:
+            st.error(f"RSS fetch error: {e}")
+        
+        # Fetch from NewsAPI
+        st.write("📡 Fetching NewsAPI...")
+        try:
+            api_articles = fetch_newsapi_articles_live()
+            all_articles.extend(api_articles)
+            st.write(f"📰 NewsAPI: {len(api_articles)} articles")
+        except Exception as e:
+            st.error(f"NewsAPI fetch error: {e}")
+        
+        # Remove duplicates based on article ID
+        unique_articles = {}
+        for article in all_articles:
+            article_id = get_article_id(article)
+            if article_id not in unique_articles:
+                unique_articles[article_id] = article
+        
+        final_articles = list(unique_articles.values())
+        st.write(f"📊 Total unique articles: {len(final_articles)}")
+        
+        # AI Analysis for all articles
+        if final_articles:
+            with st.spinner("🤖 Analyzing articles with AI..."):
+                analyzed_count = 0
+                for i, article in enumerate(final_articles):
+                    try:
+                        # Show progress
+                        if i % 5 == 0:
+                            st.write(f"🧠 Analyzing article {i+1}/{len(final_articles)}...")
+                        
+                        # Get AI analysis
+                        summary, sentiment = analyze_article_live(
+                            article.get('title', ''),
+                            article.get('description', '')
+                        )
+                        
+                        if summary and sentiment:
+                            article['summary'] = summary
+                            article['sentiment'] = sentiment
+                            analyzed_count += 1
+                        
+                    except Exception as e:
+                        st.write(f"AI analysis error for article {i+1}: {e}")
+                        continue
+                
+                st.write(f"🤖 AI Analysis complete: {analyzed_count} articles processed")
+        
+        return final_articles
 
 # Title and header
 st.title("🛢️ CrudeIntel 2.0")
-st.markdown("**Real-time Crude Oil News Monitoring & Analysis - Live Fetch**")
+st.markdown("**Real-time Crude Oil News Monitoring & Analysis - Live Mode**")
 
-# Add system status indicator
+# System status
 col1, col2, col3 = st.columns([2, 1, 1])
 with col1:
     st.markdown("### System Status")
 with col2:
-    st.success("🟢 Online - Live Data")
+    st.success("🟢 Online - Live Fetching")
 with col3:
-    last_update = datetime.now().strftime("%H:%M:%S")
-    st.caption(f"Last updated: {last_update}")
+    st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
 
 # Sidebar controls
 st.sidebar.header("🎛️ Controls")
 
-# Auto-refresh toggle
-auto_refresh = st.sidebar.checkbox("🔄 Auto-refresh (5 min)", value=True)
-
-# Fetch and analyze button
-if st.sidebar.button("🔄 Fetch & Analyze News") or len(st.session_state.cached_articles) == 0:
-    with st.spinner("Fetching latest crude oil news..."):
-        try:
-            st.sidebar.write("📡 Fetching from all sources...")
-            
-            # Fetch fresh news from all sources
-            articles = fetch_all_news()
-            
-            st.sidebar.write(f"📰 Found {len(articles)} articles")
-            st.sidebar.write("🤖 Processing with AI...")
-            
-            # Process articles with AI immediately
-            processed_articles = []
-            progress_bar = st.sidebar.progress(0)
-            
-            for i, article in enumerate(articles):
-                # Add AI analysis
-                try:
-                    sentiment, summary = analyze_article_sentiment(
-                        article.get('title', ''),
-                        article.get('description', '')
-                    )
-                    article['sentiment'] = sentiment
-                    article['summary'] = summary
-                except Exception as e:
-                    article['sentiment'] = 'Neutral'
-                    article['summary'] = 'AI analysis unavailable'
-                
-                processed_articles.append(article)
-                progress_bar.progress((i + 1) / len(articles))
-            
-            # Cache the processed articles
-            st.session_state.cached_articles = processed_articles
-            st.session_state.processing_complete = True
-            st.session_state.last_refresh = time.time()
-            
-            st.sidebar.success(f"✅ Processed {len(processed_articles)} articles")
-            st.rerun()
-            
-        except Exception as e:
-            st.sidebar.error(f"❌ Error: {str(e)}")
-
-# Send alerts for recent news
-if st.sidebar.button("📱 Send Recent Alerts"):
-    with st.spinner("Sending alerts for recent news..."):
-        try:
-            if st.session_state.cached_articles:
-                alerts_sent = asyncio.run(send_recent_alerts(st.session_state.cached_articles))
-                if alerts_sent > 0:
-                    st.sidebar.success(f"✅ Sent {alerts_sent} alerts")
-                else:
-                    st.sidebar.info("ℹ️ No new alerts to send")
-            else:
-                st.sidebar.warning("⚠️ Fetch news first")
-        except Exception as e:
-            st.sidebar.error(f"❌ Error: {str(e)}")
-
-# Manual refresh
-if st.sidebar.button("🔄 Manual Refresh"):
-    st.session_state.cached_articles = []
+# Fetch button
+if st.sidebar.button("🔄 Fetch Latest News"):
+    articles = fetch_and_analyze_news()
+    st.session_state.articles_cache = articles
+    st.session_state.last_fetch_time = datetime.now()
     st.rerun()
 
-# Add sidebar info
+# Auto-fetch on page load if cache is empty or old
+if (not st.session_state.articles_cache or 
+    not st.session_state.last_fetch_time or 
+    (datetime.now() - st.session_state.last_fetch_time).seconds > 1800):  # 30 minutes
+    
+    st.info("🔄 Auto-fetching latest news...")
+    articles = fetch_and_analyze_news()
+    st.session_state.articles_cache = articles
+    st.session_state.last_fetch_time = datetime.now()
+    st.rerun()
+
+# Get articles from cache
+articles = st.session_state.articles_cache
+
+# Send alerts for recent articles
+if st.sidebar.button("📱 Send Recent Alerts"):
+    if articles:
+        recent_articles = [a for a in articles if is_recent_article(a.get('published_at'))]
+        alert_count = 0
+        
+        with st.spinner("📱 Sending alerts for recent news..."):
+            for article in recent_articles:
+                article_id = get_article_id(article)
+                
+                # Skip if already alerted
+                if article_id in st.session_state.alerted_articles:
+                    continue
+                
+                # Only alert for non-neutral sentiment
+                sentiment = article.get('sentiment', '').lower()
+                if sentiment in ['bullish', 'bearish']:
+                    try:
+                        success = asyncio.run(send_alert_live(article))
+                        if success:
+                            st.session_state.alerted_articles.add(article_id)
+                            alert_count += 1
+                    except Exception as e:
+                        st.sidebar.error(f"Alert error: {e}")
+        
+        if alert_count > 0:
+            st.sidebar.success(f"✅ Sent {alert_count} alerts")
+        else:
+            st.sidebar.info("ℹ️ No new alerts to send")
+    else:
+        st.sidebar.warning("No articles available for alerts")
+
+# Test Telegram
+if st.sidebar.button("🧪 Test Telegram"):
+    try:
+        success = asyncio.run(send_test_alert())
+        if success:
+            st.sidebar.success("✅ Test alert sent!")
+        else:
+            st.sidebar.error("❌ Test alert failed")
+    except Exception as e:
+        st.sidebar.error(f"Telegram test error: {e}")
+
+# Clear cache
+if st.sidebar.button("🗑️ Clear Cache"):
+    st.session_state.articles_cache = []
+    st.session_state.alerted_articles = set()
+    st.sidebar.success("Cache cleared!")
+    st.rerun()
+
+# Sidebar info
 st.sidebar.markdown("---")
 st.sidebar.markdown("### ℹ️ System Info")
-st.sidebar.caption("• Live data fetch - no storage")
-st.sidebar.caption("• Instant AI analysis")
-st.sidebar.caption("• 1-hour alert window")
-st.sidebar.caption("• Duplicate prevention")
+st.sidebar.caption("• Live fetching - no database")
+st.sidebar.caption("• Auto-fetch on page load")
+st.sidebar.caption("• AI analysis in real-time")
+st.sidebar.caption("• Alerts for last 1 hour news only")
+st.sidebar.caption("• Duplicate prevention enabled")
 
 # Main content
 st.markdown("---")
 
-# Get articles from cache
-articles = st.session_state.cached_articles
-
-if not articles:
-    st.info("🔍 Click 'Fetch & Analyze News' to load the latest crude oil news!")
-else:
-    # Statistics
+# Statistics
+if articles:
     col1, col2, col3, col4 = st.columns(4)
-
+    
     with col1:
-        st.metric("📰 Live Articles", len(articles))
-
+        st.metric("📰 Total Articles", len(articles))
+    
     with col2:
-        analyzed = len([a for a in articles if a.get('summary') and a.get('summary') != 'AI analysis unavailable'])
-        st.metric("🤖 AI Analyzed", analyzed)
-
+        analyzed = len([a for a in articles if a.get('summary')])
+        st.metric("🤖 Analyzed", analyzed)
+    
     with col3:
-        recent = len([a for a in articles if a.get('published_at') and 
-                     (datetime.now(timezone.utc) - datetime.fromisoformat(a.get('published_at', '').replace('Z', '+00:00'))).total_seconds() < 3600])
+        recent = len([a for a in articles if is_recent_article(a.get('published_at'))])
         st.metric("📅 Last Hour", recent)
-
+    
     with col4:
         bullish_count = len([a for a in articles if a.get('sentiment') == 'Bullish'])
         bearish_count = len([a for a in articles if a.get('sentiment') == 'Bearish'])
@@ -160,61 +239,61 @@ else:
 
     # Filters
     st.subheader("📰 Latest Crude Oil News")
-
+    
     col1, col2, col3 = st.columns(3)
-
+    
     with col1:
         sentiment_filter = st.selectbox(
             "🎭 Filter by Sentiment",
-            ["All", "Bullish", "Bearish", "Neutral"]
+            ["All", "Bullish", "Bearish", "Neutral", "Unanalyzed"]
         )
-
+    
     with col2:
         sources = ["All"] + sorted(list(set([a.get('source', 'Unknown') for a in articles])))
         source_filter = st.selectbox("📡 Filter by Source", sources)
-
+    
     with col3:
-        time_filter = st.selectbox("⏰ Filter by Time", 
-                                  ["All", "Last Hour", "Last 6 Hours", "Last 24 Hours"])
-
+        limit = st.selectbox("📊 Show Articles", [10, 25, 50, 100], index=1)
+    
     # Apply filters
     filtered_articles = articles
-
+    
     if sentiment_filter != "All":
-        filtered_articles = [a for a in filtered_articles if a.get('sentiment') == sentiment_filter]
-
+        if sentiment_filter == "Unanalyzed":
+            filtered_articles = [a for a in filtered_articles if not a.get('summary')]
+        else:
+            filtered_articles = [a for a in filtered_articles if a.get('sentiment') == sentiment_filter]
+    
     if source_filter != "All":
         filtered_articles = [a for a in filtered_articles if a.get('source') == source_filter]
-
-    if time_filter != "All":
-        now = datetime.now(timezone.utc)
-        hours = {"Last Hour": 1, "Last 6 Hours": 6, "Last 24 Hours": 24}[time_filter]
-        cutoff = now - timedelta(hours=hours)
-        filtered_articles = [a for a in filtered_articles if a.get('published_at') and 
-                           datetime.fromisoformat(a.get('published_at', '').replace('Z', '+00:00')) > cutoff]
-
-    # Sort by published date (newest first)
+    
+    # Sort by published date
     try:
         filtered_articles = sorted(filtered_articles, 
                                  key=lambda x: datetime.fromisoformat(x.get('published_at', '1970-01-01T00:00:00Z').replace('Z', '+00:00')), 
                                  reverse=True)
     except:
         pass
-
+    
+    filtered_articles = filtered_articles[:limit]
+    
     # Display articles
     if filtered_articles:
         st.markdown(f"📊 Showing **{len(filtered_articles)}** articles")
         
-        for i, article in enumerate(filtered_articles[:50]):  # Limit to 50 for performance
+        for i, article in enumerate(filtered_articles):
             title = article.get('title', 'No Title')
             link = article.get('link', '#')
-            sentiment = article.get('sentiment', 'Neutral')
+            sentiment = article.get('sentiment', 'Pending')
             summary = article.get('summary', '')
             description = article.get('description', '')
             source = article.get('source', 'Unknown')
             published_at = article.get('published_at', 'Unknown')
             
-            # Sentiment emoji
+            # Recent article indicator
+            is_recent = is_recent_article(published_at)
+            recent_badge = "🔥 RECENT" if is_recent else ""
+            
             sentiment_emoji = {'Bullish': '🟢', 'Bearish': '🔴', 'Neutral': '⚪'}
             emoji = sentiment_emoji.get(sentiment, '⚪')
             
@@ -226,56 +305,67 @@ else:
                 
                 with col1:
                     if link and link != '#':
-                        st.markdown(f"### [{title}]({link})")
+                        st.markdown(f"### [{title}]({link}) {recent_badge}")
                     else:
-                        st.markdown(f"### {title}")
+                        st.markdown(f"### {title} {recent_badge}")
                 
                 with col2:
                     st.markdown(f"## {emoji} {sentiment}")
                 
-                # AI Summary or description
-                if summary and summary != 'AI analysis unavailable':
+                if summary:
                     st.markdown(f"**🤖 AI Summary:** {summary}")
                 elif description:
                     if len(description) > 300:
                         description = description[:300] + "..."
                     st.markdown(f"**📝 Description:** {description}")
+                else:
+                    st.markdown("*No description available*")
                 
                 # Metadata
                 try:
                     if published_at != 'Unknown':
-                        pub_date = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
-                        time_ago = datetime.now(timezone.utc) - pub_date
+                        published_date = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
+                        time_ago = datetime.now(timezone.utc) - published_date
                         
                         col1, col2, col3 = st.columns(3)
                         col1.caption(f"📡 **Source:** {source}")
-                        col2.caption(f"🕒 **Published:** {pub_date.strftime('%b %d, %H:%M UTC')}")
+                        col2.caption(f"🕒 **Published:** {published_date.strftime('%b %d, %Y %H:%M UTC')}")
                         
-                        if time_ago.total_seconds() < 3600:
-                            minutes = max(1, int(time_ago.total_seconds() // 60))
-                            col3.caption(f"⏰ **{minutes} min ago** 🔥")
-                        elif time_ago.days == 0:
-                            hours = int(time_ago.total_seconds() // 3600)
-                            col3.caption(f"⏰ **{hours}h ago**")
+                        if time_ago.days > 0:
+                            col3.caption(f"⏰ **Age:** {time_ago.days} day{'s' if time_ago.days != 1 else ''} ago")
+                        elif time_ago.seconds > 3600:
+                            hours = time_ago.seconds // 3600
+                            col3.caption(f"⏰ **Age:** {hours} hour{'s' if hours != 1 else ''} ago")
                         else:
-                            col3.caption(f"⏰ **{time_ago.days}d ago**")
+                            minutes = max(1, time_ago.seconds // 60)
+                            col3.caption(f"⏰ **Age:** {minutes} min ago")
                 except:
                     st.caption(f"📡 **Source:** {source}")
-
     else:
-        st.info("🔍 No articles match your filters. Try adjusting the criteria.")
+        st.info("🔍 No articles found with current filters.")
 
-# Auto-refresh logic
-if auto_refresh and len(st.session_state.cached_articles) > 0:
-    current_time = time.time()
-    if current_time - st.session_state.last_refresh > 300:  # 5 minutes
-        st.session_state.cached_articles = []
-        st.rerun()
-    else:
-        time_left = 300 - (current_time - st.session_state.last_refresh)
-        minutes_left = int(time_left // 60)
-        seconds_left = int(time_left % 60)
-        st.caption(f"🔄 Auto-refresh in: {minutes_left}:{seconds_left:02d}")
+else:
+    st.info("🔄 Click 'Fetch Latest News' to load articles or refresh the page!")
+
+# Footer
+st.markdown("---")
+st.markdown("### 💡 Live Mode Features")
+col1, col2 = st.columns(2)
+
+with col1:
+    st.markdown("""
+    - **🔄 Auto-fetch**: Fresh news on every page load
+    - **🤖 Real-time AI**: Instant analysis and sentiment
+    - **🔥 Recent alerts**: Only last 1 hour news
+    """)
+
+with col2:
+    st.markdown("""
+    - **🚫 No duplicates**: Smart duplicate prevention
+    - **💾 No database**: Zero storage complexity
+    - **⚡ Super fast**: Direct memory operations
+    """)
+    
         
                             
                         
