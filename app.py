@@ -7,9 +7,9 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import time
 
-# Import your custom modules (now using SQLite database)
+# Import your custom modules (now using Firebase Firestore database)
 try:
-    from database import get_recent_articles, test_database_connection, init_database
+    from database import get_recent_articles, test_database_connection
     from news_fetcher import fetch_news
     from newsapi_fetcher import fetch_newsapi_articles
     from summarizer import process_unanalyzed_articles
@@ -17,12 +17,6 @@ try:
 except ImportError as e:
     st.error(f"Error importing modules: {e}")
     st.stop()
-
-# Initialize SQLite database on startup
-try:
-    init_database()
-except Exception as e:
-    st.error(f"Error initializing database: {e}")
 
 # Page config
 st.set_page_config(
@@ -38,14 +32,14 @@ if 'last_refresh' not in st.session_state:
 
 # Title and header
 st.title("🛢️ CrudeIntel 2.0")
-st.markdown("**Real-time Crude Oil News Monitoring & Analysis - SQLite Powered**")
+st.markdown("**Real-time Crude Oil News Monitoring & Analysis - Firebase Powered**")
 
 # Add system status indicator
 col1, col2, col3 = st.columns([2, 1, 1])
 with col1:
     st.markdown("### System Status")
 with col2:
-    st.success("🟢 Online - Local Database")
+    st.success("🟢 Online - Firebase Firestore")
 with col3:
     last_update = datetime.now().strftime("%H:%M:%S")
     st.caption(f"Last updated: {last_update}")
@@ -84,11 +78,11 @@ if st.sidebar.button("🔄 Fetch New Articles"):
 
 # Add database test button for debugging
 if st.sidebar.button("🔍 Test Database"):
-    with st.spinner("Testing SQLite database..."):
+    with st.spinner("Testing Firebase Firestore..."):
         try:
             success = test_database_connection()
             if success:
-                st.sidebar.success("✅ SQLite database working perfectly!")
+                st.sidebar.success("✅ Firebase Firestore working perfectly!")
             else:
                 st.sidebar.error("❌ Database test failed!")
         except Exception as e:
@@ -151,7 +145,7 @@ if st.sidebar.button("🧪 Test Telegram"):
 # Add sidebar info
 st.sidebar.markdown("---")
 st.sidebar.markdown("### ℹ️ System Info")
-st.sidebar.caption("• SQLite local database - ultra fast")
+st.sidebar.caption("• Firebase Firestore - Google reliability")
 st.sidebar.caption("• Auto-fetch every 5 minutes")
 st.sidebar.caption("• AI analysis on demand")
 st.sidebar.caption("• Instant Telegram alerts")
@@ -160,7 +154,7 @@ st.sidebar.caption("• Instant Telegram alerts")
 st.sidebar.markdown("### 🔍 Debug Info")
 st.sidebar.caption("• Check Render logs for detailed output")
 st.sidebar.caption("• Use test buttons above for diagnosis")
-st.sidebar.caption("• Local database - no network dependencies")
+st.sidebar.caption("• Cloud database - global reliability")
 
 # Main content
 st.markdown("---")
@@ -335,7 +329,7 @@ with col1:
     st.markdown("""
     - **🔄 Fetch Articles**: Get latest crude oil news from multiple sources
     - **🤖 AI Analysis**: Generate summaries and sentiment analysis
-    - **🔍 Test Database**: Verify your local SQLite database
+    - **🔍 Test Database**: Verify your Firebase connection
     """)
 
 with col2:
@@ -361,6 +355,7 @@ if auto_refresh:
         # Use a placeholder to refresh the countdown
         time.sleep(1)
         st.rerun()
+                        
                     
         
     
