@@ -4,17 +4,17 @@ import os
 import requests
 from datetime import datetime, timezone
 import pytz
-from database import insert_article, check_article_exists
 
 tz = pytz.timezone("Asia/Kolkata")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 
-def fetch_newsapi_articles(query="crude oil OR OPEC OR inventory", limit=5):
-    print(f"🔍 DEBUG: Starting NewsAPI fetch with query: '{query}', limit: {limit}")
+def fetch_newsapi_articles_live(query="crude oil OR OPEC OR inventory", limit=5):
+    """Fetch NewsAPI articles live and return as list of dicts (database-free)"""
+    print(f"🔍 DEBUG: Starting NewsAPI live fetch with query: '{query}', limit: {limit}")
     
     if not NEWSAPI_KEY:
         print("❌ NEWSAPI_KEY not found in environment.")
-        return 0
+        return []
 
     url = "https://newsapi.org/v2/everything"
     params = {
@@ -34,15 +34,15 @@ def fetch_newsapi_articles(query="crude oil OR OPEC OR inventory", limit=5):
         
         if response.status_code != 200:
             print(f"❌ HTTP Error: {response.status_code}")
-            return 0
+            return []
             
         data = response.json()
 
         if data.get("status") != "ok":
             print(f"❌ NewsAPI error: {data.get('message')}")
-            return 0
+            return []
 
-        articles_added = 0
+        articles_collected = []
         total_found = len(data.get("articles", []))
         print(f"✅ Found {total_found} articles from NewsAPI")
 
@@ -64,14 +64,6 @@ def fetch_newsapi_articles(query="crude oil OR OPEC OR inventory", limit=5):
                     print(f"❌ Missing title or link - SKIPPED")
                     continue
 
-                # Check if article already exists
-                exists = check_article_exists(link)
-                print(f"🔄 Duplicate check result: {'EXISTS' if exists else 'NEW'}")
-                
-                if exists:
-                    print(f"📋 Article already exists - SKIPPED")
-                    continue
-
                 # Parse published date
                 try:
                     published_at = datetime.strptime(published_at_str, "%Y-%m-%dT%H:%M:%SZ")
@@ -81,30 +73,28 @@ def fetch_newsapi_articles(query="crude oil OR OPEC OR inventory", limit=5):
                     published_at = datetime.now(timezone.utc)
                     print(f"⚠️ Date parse failed, using current time: {e}")
 
-                # Insert article into database
-                print(f"💾 Attempting database insert for NewsAPI article...")
-                result = insert_article(
-                    title=title,
-                    description=description,
-                    source=source,
-                    link=link,
-                    published_at=published_at.isoformat()
-                )
+                # Create article object (no database insertion)
+                article_dict = {
+                    'title': title,
+                    'description': description,
+                    'link': link,
+                    'published_at': published_at.isoformat(),
+                    'source': source
+                }
 
-                if result:
-                    articles_added += 1
-                    print(f"✅ SUCCESS: NewsAPI article inserted!")
-                else:
-                    print(f"❌ FAILED: Database insert returned False")
+                articles_collected.append(article_dict)
+                print(f"✅ SUCCESS: NewsAPI article collected in memory!")
 
             except Exception as e:
                 print(f"❌ Error processing NewsAPI article: {e}")
                 continue
 
-        print(f"\n🏁 NewsAPI FINAL RESULT: {articles_added} articles successfully added")
-        return articles_added
+        print(f"\n🏁 NewsAPI FINAL RESULT: {len(articles_collected)} articles collected")
+        return articles_collected
 
     except Exception as e:
         print(f"❌ Error fetching NewsAPI data: {e}")
-        return 0
-        
+        return []
+
+# Backward compatibility alias - keeps old function name working
+fetch_newsapi_articles = fetch_newsapi_articles_live
