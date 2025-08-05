@@ -2,7 +2,6 @@ import feedparser
 import requests
 from datetime import datetime, timezone
 import pytz
-from database import insert_article, check_article_exists
 
 # Set timezone for India
 tz = pytz.timezone("Asia/Kolkata")
@@ -42,9 +41,9 @@ def is_crude_related(text: str) -> bool:
     print(f"🔍 Keyword filter check for: '{text[:75]}...' → Result: {result}")
     return result
 
-def fetch_rss_news(limit_per_feed=6):
-    """Fetch crude oil news and save to database with enhanced debug logging"""
-    articles_added = 0
+def fetch_news_live(limit_per_feed=6):
+    """Fetch crude oil news and return articles directly (no database)"""
+    articles_collected = []
     total_processed = 0
     
     headers = {
@@ -98,14 +97,6 @@ def fetch_rss_news(limit_per_feed=6):
                     crude_related_count += 1
                     total_processed += 1
                     
-                    # Check if article already exists
-                    exists = check_article_exists(link)
-                    print(f"🔄 Duplicate check result: {'EXISTS' if exists else 'NEW'}")
-                    
-                    if exists:
-                        print(f"📋 Article already exists - SKIPPED")
-                        continue
-                    
                     # Parse published date
                     try:
                         if hasattr(entry, 'published_parsed') and entry.published_parsed:
@@ -117,21 +108,17 @@ def fetch_rss_news(limit_per_feed=6):
                     
                     print(f"📅 Published date: {published_at}")
                     
-                    # Attempt database insertion
-                    print(f"💾 Attempting database insert...")
-                    result = insert_article(
-                        title=title,
-                        description=description,
-                        source=source_name,
-                        link=link,
-                        published_at=published_at.isoformat()
-                    )
+                    # Create article object (no database insertion)
+                    article = {
+                        'title': title,
+                        'description': description,
+                        'link': link,
+                        'published_at': published_at.isoformat(),
+                        'source': f"RSS - {source_name}"
+                    }
                     
-                    if result:
-                        articles_added += 1
-                        print(f"✅ SUCCESS: Article inserted into database!")
-                    else:
-                        print(f"❌ FAILED: Database insert returned False")
+                    articles_collected.append(article)
+                    print(f"✅ SUCCESS: Article collected in memory!")
                         
                 except Exception as e:
                     print(f"❌ Error processing entry: {e}")
@@ -143,11 +130,10 @@ def fetch_rss_news(limit_per_feed=6):
             print(f"❌ Error fetching from {source_name}: {e}")
             continue
     
-    print(f"\n🏁 FINAL RESULT: {articles_added} articles successfully added to database")
+    print(f"\n🏁 RSS FINAL RESULT: {len(articles_collected)} articles collected from RSS sources")
     print(f"📊 TOTAL PROCESSED: {total_processed} articles passed all filters")
-    return articles_added
+    return articles_collected
 
-# Keep the old function name as an alias for backward compatibility
-fetch_news = fetch_rss_news
-
-
+# Backward compatibility aliases
+fetch_news = fetch_news_live
+fetch_rss_news = fetch_news_live
