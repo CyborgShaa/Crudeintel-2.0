@@ -7,6 +7,30 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 import time
 
+# Initialize auto-refresh session state
+if 'last_refresh' not in st.session_state:
+    st.session_state['last_refresh'] = 0
+
+AUTO_REFRESH_INTERVAL = 300  # 5 minutes (300 sec)
+auto_refresh = st.sidebar.checkbox("🔄 Auto-refresh (5 min)", value=True)
+
+if auto_refresh:
+    current_time = time.time()
+    time_since_last = current_time - st.session_state['last_refresh']
+
+    if time_since_last > AUTO_REFRESH_INTERVAL:
+        st.session_state['last_refresh'] = current_time
+        st.experimental_rerun()  # Only rerun if interval has passed
+    else:
+        time_left = AUTO_REFRESH_INTERVAL - time_since_last
+        mins = int(time_left // 60)
+        secs = int(time_left % 60)
+        st.sidebar.caption(f"🔄 Next auto-refresh in: {mins}:{secs:02d}")
+        # No rerun, just display countdown
+
+# ...then continue with your normal app code...
+
+
 # Import modules
 try:
     from news_fetcher import fetch_news_live
