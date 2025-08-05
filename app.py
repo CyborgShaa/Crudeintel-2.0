@@ -4,16 +4,15 @@ os.environ['STREAMLIT_BROWSER_GATHER_USAGE_STATS'] = 'false'
 
 import streamlit as st
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone, timedelta
 import time
+import hashlib
 
-# Import your custom modules (now using Firebase Firestore database)
+# Import your custom modules (no database needed)
 try:
-    from database import get_recent_articles, test_database_connection
-    from news_fetcher import fetch_news
-    from newsapi_fetcher import fetch_newsapi_articles
-    from summarizer import process_unanalyzed_articles
-    from telegram_alerts import send_alerts, send_test_alert
+    from news_fetcher import fetch_all_news
+    from summarizer import analyze_article_sentiment
+    from telegram_alerts import send_recent_alerts
 except ImportError as e:
     st.error(f"Error importing modules: {e}")
     st.stop()
@@ -26,20 +25,24 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Initialize session state for auto-refresh
+# Initialize session state for caching and auto-refresh
 if 'last_refresh' not in st.session_state:
-    st.session_state.last_refresh = time.time()
+    st.session_state.last_refresh = 0
+if 'cached_articles' not in st.session_state:
+    st.session_state.cached_articles = []
+if 'processing_complete' not in st.session_state:
+    st.session_state.processing_complete = False
 
 # Title and header
 st.title("🛢️ CrudeIntel 2.0")
-st.markdown("**Real-time Crude Oil News Monitoring & Analysis - Firebase Powered**")
+st.markdown("**Real-time Crude Oil News Monitoring & Analysis - Live Fetch**")
 
 # Add system status indicator
 col1, col2, col3 = st.columns([2, 1, 1])
 with col1:
     st.markdown("### System Status")
 with col2:
-    st.success("🟢 Online - Firebase Firestore")
+    st.success("🟢 Online - Live Data")
 with col3:
     last_update = datetime.now().strftime("%H:%M:%S")
     st.caption(f"Last updated: {last_update}")
@@ -50,147 +53,102 @@ st.sidebar.header("🎛️ Controls")
 # Auto-refresh toggle
 auto_refresh = st.sidebar.checkbox("🔄 Auto-refresh (5 min)", value=True)
 
-# Enhanced fetch button with better debugging
-if st.sidebar.button("🔄 Fetch New Articles"):
-    with st.spinner("Fetching latest news..."):
+# Fetch and analyze button
+if st.sidebar.button("🔄 Fetch & Analyze News") or len(st.session_state.cached_articles) == 0:
+    with st.spinner("Fetching latest crude oil news..."):
         try:
-            st.sidebar.write("🔍 Starting fetch process...")
+            st.sidebar.write("📡 Fetching from all sources...")
             
-            # Fetch from RSS sources
-            st.sidebar.write("📡 Fetching RSS sources...")
-            rss_count = fetch_news()
-            st.sidebar.write(f"📰 RSS: {rss_count} articles")
+            # Fetch fresh news from all sources
+            articles = fetch_all_news()
             
-            # Fetch from NewsAPI
-            st.sidebar.write("📡 Fetching NewsAPI...")
-            api_count = fetch_newsapi_articles()
-            st.sidebar.write(f"📰 NewsAPI: {api_count} articles")
+            st.sidebar.write(f"📰 Found {len(articles)} articles")
+            st.sidebar.write("🤖 Processing with AI...")
             
-            total_added = rss_count + api_count
+            # Process articles with AI immediately
+            processed_articles = []
+            progress_bar = st.sidebar.progress(0)
             
-            if total_added > 0:
-                st.sidebar.success(f"✅ Added {total_added} new articles")
-                st.rerun()  # Refresh to show new articles
-            else:
-                st.sidebar.info("ℹ️ No new articles found")
-        except Exception as e:
-            st.sidebar.error(f"❌ Error fetching articles: {str(e)}")
-
-# Add database test button for debugging
-if st.sidebar.button("🔍 Test Database"):
-    with st.spinner("Testing Firebase Firestore..."):
-        try:
-            success = test_database_connection()
-            if success:
-                st.sidebar.success("✅ Firebase Firestore working perfectly!")
-            else:
-                st.sidebar.error("❌ Database test failed!")
-        except Exception as e:
-            st.sidebar.error(f"❌ Database test error: {str(e)}")
-
-# Add database stats button
-if st.sidebar.button("📊 Database Stats"):
-    with st.spinner("Checking database..."):
-        try:
-            all_articles = get_recent_articles(1000)
-            st.sidebar.info(f"📊 Total articles in DB: {len(all_articles) if all_articles else 0}")
-            
-            if all_articles:
-                sources = {}
-                for article in all_articles:
-                    source = article.get('source', 'Unknown')
-                    sources[source] = sources.get(source, 0) + 1
+            for i, article in enumerate(articles):
+                # Add AI analysis
+                try:
+                    sentiment, summary = analyze_article_sentiment(
+                        article.get('title', ''),
+                        article.get('description', '')
+                    )
+                    article['sentiment'] = sentiment
+                    article['summary'] = summary
+                except Exception as e:
+                    article['sentiment'] = 'Neutral'
+                    article['summary'] = 'AI analysis unavailable'
                 
-                st.sidebar.write("📡 Articles by source:")
-                for source, count in list(sources.items())[:5]:  # Show top 5
-                    st.sidebar.write(f"  • {source}: {count}")
-                    
+                processed_articles.append(article)
+                progress_bar.progress((i + 1) / len(articles))
+            
+            # Cache the processed articles
+            st.session_state.cached_articles = processed_articles
+            st.session_state.processing_complete = True
+            st.session_state.last_refresh = time.time()
+            
+            st.sidebar.success(f"✅ Processed {len(processed_articles)} articles")
+            st.rerun()
+            
         except Exception as e:
-            st.sidebar.error(f"❌ Database stats error: {str(e)}")
+            st.sidebar.error(f"❌ Error: {str(e)}")
 
-if st.sidebar.button("🤖 Process with AI"):
-    with st.spinner("Analyzing articles with AI..."):
+# Send alerts for recent news
+if st.sidebar.button("📱 Send Recent Alerts"):
+    with st.spinner("Sending alerts for recent news..."):
         try:
-            processed = process_unanalyzed_articles()
-            if processed > 0:
-                st.sidebar.success(f"✅ Processed {processed} articles")
-                st.rerun()  # Refresh to show updated summaries
+            if st.session_state.cached_articles:
+                alerts_sent = asyncio.run(send_recent_alerts(st.session_state.cached_articles))
+                if alerts_sent > 0:
+                    st.sidebar.success(f"✅ Sent {alerts_sent} alerts")
+                else:
+                    st.sidebar.info("ℹ️ No new alerts to send")
             else:
-                st.sidebar.info("ℹ️ No articles to process")
+                st.sidebar.warning("⚠️ Fetch news first")
         except Exception as e:
-            st.sidebar.error(f"❌ Error processing articles: {str(e)}")
+            st.sidebar.error(f"❌ Error: {str(e)}")
 
-if st.sidebar.button("📱 Send Alerts"):
-    with st.spinner("Sending Telegram alerts..."):
-        try:
-            alerts = asyncio.run(send_alerts())
-            if alerts > 0:
-                st.sidebar.success(f"✅ Sent {alerts} alerts")
-            else:
-                st.sidebar.info("ℹ️ No new alerts to send")
-        except Exception as e:
-            st.sidebar.error(f"❌ Error sending alerts: {str(e)}")
-
-if st.sidebar.button("🧪 Test Telegram"):
-    with st.spinner("Testing Telegram connection..."):
-        try:
-            success = asyncio.run(send_test_alert())
-            if success:
-                st.sidebar.success("✅ Test alert sent!")
-            else:
-                st.sidebar.error("❌ Test alert failed")
-        except Exception as e:
-            st.sidebar.error(f"❌ Telegram test error: {str(e)}")
+# Manual refresh
+if st.sidebar.button("🔄 Manual Refresh"):
+    st.session_state.cached_articles = []
+    st.rerun()
 
 # Add sidebar info
 st.sidebar.markdown("---")
 st.sidebar.markdown("### ℹ️ System Info")
-st.sidebar.caption("• Firebase Firestore - Google reliability")
-st.sidebar.caption("• Auto-fetch every 5 minutes")
-st.sidebar.caption("• AI analysis on demand")
-st.sidebar.caption("• Instant Telegram alerts")
-
-# Debug info in sidebar
-st.sidebar.markdown("### 🔍 Debug Info")
-st.sidebar.caption("• Check Render logs for detailed output")
-st.sidebar.caption("• Use test buttons above for diagnosis")
-st.sidebar.caption("• Cloud database - global reliability")
+st.sidebar.caption("• Live data fetch - no storage")
+st.sidebar.caption("• Instant AI analysis")
+st.sidebar.caption("• 1-hour alert window")
+st.sidebar.caption("• Duplicate prevention")
 
 # Main content
 st.markdown("---")
 
-# Get recent articles with enhanced error handling
-try:
-    articles = get_recent_articles(100)  # Get more articles for better filtering
-    if not articles:
-        st.warning("⚠️ No articles found in database. Try fetching new articles first.")
-except Exception as e:
-    st.error(f"Error loading articles: {e}")
-    articles = []
+# Get articles from cache
+articles = st.session_state.cached_articles
 
-# Statistics with safe access
-col1, col2, col3, col4 = st.columns(4)
+if not articles:
+    st.info("🔍 Click 'Fetch & Analyze News' to load the latest crude oil news!")
+else:
+    # Statistics
+    col1, col2, col3, col4 = st.columns(4)
 
-with col1:
-    st.metric("📰 Total Articles", len(articles) if articles else 0)
+    with col1:
+        st.metric("📰 Live Articles", len(articles))
 
-with col2:
-    analyzed = len([a for a in articles if a.get('summary')]) if articles else 0
-    st.metric("🤖 Analyzed", analyzed)
+    with col2:
+        analyzed = len([a for a in articles if a.get('summary') and a.get('summary') != 'AI analysis unavailable'])
+        st.metric("🤖 AI Analyzed", analyzed)
 
-with col3:
-    if articles:
-        try:
-            # Safe access to published_at with error handling
-            recent = len([a for a in articles if a.get('published_at') and (datetime.now(timezone.utc) - datetime.fromisoformat(a.get('published_at', '').replace('Z', '+00:00'))).days < 1])
-            st.metric("📅 Last 24h", recent)
-        except:
-            st.metric("📅 Last 24h", "N/A")
-    else:
-        st.metric("📅 Last 24h", 0)
+    with col3:
+        recent = len([a for a in articles if a.get('published_at') and 
+                     (datetime.now(timezone.utc) - datetime.fromisoformat(a.get('published_at', '').replace('Z', '+00:00'))).total_seconds() < 3600])
+        st.metric("📅 Last Hour", recent)
 
-with col4:
-    if articles:
+    with col4:
         bullish_count = len([a for a in articles if a.get('sentiment') == 'Bullish'])
         bearish_count = len([a for a in articles if a.get('sentiment') == 'Bearish'])
         if bullish_count > bearish_count:
@@ -199,11 +157,7 @@ with col4:
             st.metric("📊 Market Mood", "🔴 Bearish", bearish_count)
         else:
             st.metric("📊 Market Mood", "⚪ Neutral", "Balanced")
-    else:
-        st.metric("📊 Market Mood", "⚪ No Data", 0)
 
-# Only show filters and articles if we have articles
-if articles:
     # Filters
     st.subheader("📰 Latest Crude Oil News")
 
@@ -212,68 +166,62 @@ if articles:
     with col1:
         sentiment_filter = st.selectbox(
             "🎭 Filter by Sentiment",
-            ["All", "Bullish", "Bearish", "Neutral", "Unanalyzed"]
+            ["All", "Bullish", "Bearish", "Neutral"]
         )
 
     with col2:
-        # Safe access for sources filter
-        sources = ["All"] + sorted(list(set([a.get('source', 'Unknown') for a in articles if a.get('source')])))
+        sources = ["All"] + sorted(list(set([a.get('source', 'Unknown') for a in articles])))
         source_filter = st.selectbox("📡 Filter by Source", sources)
 
     with col3:
-        limit = st.selectbox("📊 Show Articles", [10, 25, 50, 100], index=1)
+        time_filter = st.selectbox("⏰ Filter by Time", 
+                                  ["All", "Last Hour", "Last 6 Hours", "Last 24 Hours"])
 
-    # Apply filters with safe access
+    # Apply filters
     filtered_articles = articles
 
     if sentiment_filter != "All":
-        if sentiment_filter == "Unanalyzed":
-            filtered_articles = [a for a in filtered_articles if not a.get('summary')]
-        else:
-            filtered_articles = [a for a in filtered_articles if a.get('sentiment') == sentiment_filter]
+        filtered_articles = [a for a in filtered_articles if a.get('sentiment') == sentiment_filter]
 
     if source_filter != "All":
         filtered_articles = [a for a in filtered_articles if a.get('source') == source_filter]
 
-    # Sort by published date (newest first) with safe access
+    if time_filter != "All":
+        now = datetime.now(timezone.utc)
+        hours = {"Last Hour": 1, "Last 6 Hours": 6, "Last 24 Hours": 24}[time_filter]
+        cutoff = now - timedelta(hours=hours)
+        filtered_articles = [a for a in filtered_articles if a.get('published_at') and 
+                           datetime.fromisoformat(a.get('published_at', '').replace('Z', '+00:00')) > cutoff]
+
+    # Sort by published date (newest first)
     try:
         filtered_articles = sorted(filtered_articles, 
                                  key=lambda x: datetime.fromisoformat(x.get('published_at', '1970-01-01T00:00:00Z').replace('Z', '+00:00')), 
                                  reverse=True)
     except:
-        pass  # Keep original order if sorting fails
+        pass
 
-    # Limit results
-    filtered_articles = filtered_articles[:limit]
-
-    # Display articles with safe access
+    # Display articles
     if filtered_articles:
         st.markdown(f"📊 Showing **{len(filtered_articles)}** articles")
         
-        for i, article in enumerate(filtered_articles):
-            # Safe access with defaults - prevents KeyError
+        for i, article in enumerate(filtered_articles[:50]):  # Limit to 50 for performance
             title = article.get('title', 'No Title')
             link = article.get('link', '#')
-            sentiment = article.get('sentiment', 'Pending')
+            sentiment = article.get('sentiment', 'Neutral')
             summary = article.get('summary', '')
             description = article.get('description', '')
             source = article.get('source', 'Unknown')
             published_at = article.get('published_at', 'Unknown')
             
             # Sentiment emoji
-            sentiment_emoji = {
-                'Bullish': '🟢',
-                'Bearish': '🔴',
-                'Neutral': '⚪'
-            }
+            sentiment_emoji = {'Bullish': '🟢', 'Bearish': '🔴', 'Neutral': '⚪'}
             emoji = sentiment_emoji.get(sentiment, '⚪')
             
-            # Article container with better styling
             with st.container():
-                if i > 0:  # Don't add divider before first article
+                if i > 0:
                     st.markdown("---")
                 
-                # Title and sentiment - safe access
                 col1, col2 = st.columns([4, 1])
                 
                 with col1:
@@ -285,87 +233,50 @@ if articles:
                 with col2:
                     st.markdown(f"## {emoji} {sentiment}")
                 
-                # Summary or description - safe access
-                if summary:
+                # AI Summary or description
+                if summary and summary != 'AI analysis unavailable':
                     st.markdown(f"**🤖 AI Summary:** {summary}")
                 elif description:
                     if len(description) > 300:
                         description = description[:300] + "..."
                     st.markdown(f"**📝 Description:** {description}")
-                else:
-                    st.markdown("*No description available*")
                 
-                # Metadata with better formatting and safe access
+                # Metadata
                 try:
                     if published_at != 'Unknown':
-                        published_date = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
-                        time_ago = datetime.now(timezone.utc) - published_date
+                        pub_date = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
+                        time_ago = datetime.now(timezone.utc) - pub_date
                         
                         col1, col2, col3 = st.columns(3)
+                        col1.caption(f"📡 **Source:** {source}")
+                        col2.caption(f"🕒 **Published:** {pub_date.strftime('%b %d, %H:%M UTC')}")
                         
-                        with col1:
-                            st.caption(f"📡 **Source:** {source}")
-                        
-                        with col2:
-                            st.caption(f"🕒 **Published:** {published_date.strftime('%b %d, %Y %H:%M UTC')}")
-                        
-                        with col3:
-                            if time_ago.days > 0:
-                                st.caption(f"⏰ **Age:** {time_ago.days} day{'s' if time_ago.days != 1 else ''} ago")
-                            elif time_ago.seconds > 3600:
-                                hours = time_ago.seconds // 3600
-                                st.caption(f"⏰ **Age:** {hours} hour{'s' if hours != 1 else ''} ago")
-                            else:
-                                minutes = max(1, time_ago.seconds // 60)
-                                st.caption(f"⏰ **Age:** {minutes} min ago")
-                    else:
-                        st.caption(f"📡 **Source:** {source}")
-                        st.caption(f"📅 **Published:** {published_at}")
-                except Exception:
+                        if time_ago.total_seconds() < 3600:
+                            minutes = max(1, int(time_ago.total_seconds() // 60))
+                            col3.caption(f"⏰ **{minutes} min ago** 🔥")
+                        elif time_ago.days == 0:
+                            hours = int(time_ago.total_seconds() // 3600)
+                            col3.caption(f"⏰ **{hours}h ago**")
+                        else:
+                            col3.caption(f"⏰ **{time_ago.days}d ago**")
+                except:
                     st.caption(f"📡 **Source:** {source}")
-                    st.caption(f"📅 **Published:** {published_at}")
 
     else:
-        st.info("🔍 No articles found with the selected filters. Try adjusting your filter criteria.")
+        st.info("🔍 No articles match your filters. Try adjusting the criteria.")
 
-else:
-    st.info("🔍 No articles found in database. Click '🔄 Fetch New Articles' to get started!")
-
-# Footer
-st.markdown("---")
-st.markdown("### 💡 Tips")
-col1, col2 = st.columns(2)
-
-with col1:
-    st.markdown("""
-    - **🔄 Fetch Articles**: Get latest crude oil news from multiple sources
-    - **🤖 AI Analysis**: Generate summaries and sentiment analysis
-    - **🔍 Test Database**: Verify your Firebase connection
-    """)
-
-with col2:
-    st.markdown("""
-    - **📊 Database Stats**: Check stored articles by source
-    - **📱 Alerts**: Send important news via Telegram
-    - **🧪 Test**: Verify your Telegram bot connection
-    """)
-
-# Auto-refresh logic (improved)
-if auto_refresh:
+# Auto-refresh logic
+if auto_refresh and len(st.session_state.cached_articles) > 0:
     current_time = time.time()
-    if current_time - st.session_state.last_refresh > 300:  # 5 minutes = 300 seconds
-        st.session_state.last_refresh = current_time
+    if current_time - st.session_state.last_refresh > 300:  # 5 minutes
+        st.session_state.cached_articles = []
         st.rerun()
     else:
-        # Show countdown to next refresh
         time_left = 300 - (current_time - st.session_state.last_refresh)
         minutes_left = int(time_left // 60)
         seconds_left = int(time_left % 60)
-        st.caption(f"🔄 Next auto-refresh in: {minutes_left}:{seconds_left:02d}")
+        st.caption(f"🔄 Auto-refresh in: {minutes_left}:{seconds_left:02d}")
         
-        # Use a placeholder to refresh the countdown
-        time.sleep(1)
-        st.rerun()
                             
                         
                     
