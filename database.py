@@ -1,227 +1,281 @@
-import sqlite3
-import json
-from datetime import datetime
 import os
+import requests
+import json
+import hashlib
+from datetime import datetime, timezone
+from typing import List, Dict, Optional
 
-# Database file path
-DB_PATH = "crudeintel.db"
+# Firebase Firestore configuration
+FIREBASE_PROJECT_ID = os.getenv('FIREBASE_PROJECT_ID')
+FIREBASE_API_KEY = os.getenv('FIREBASE_API_KEY')
 
-def init_database():
-    """Initialize SQLite database with news_articles table"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+def get_firestore_url(collection: str, document_id: str = None):
+    """Generate Firestore REST API URL"""
+    base_url = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents/{collection}"
+    if document_id:
+        base_url += f"/{document_id}"
+    return base_url
+
+def make_firestore_request(method: str, url: str, data: Dict = None) -> Dict:
+    """Make authenticated request to Firestore REST API"""
+    headers = {
+        'Content-Type': 'application/json'
+    }
     
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS news_articles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            description TEXT,
-            source TEXT,
-            link TEXT UNIQUE,
-            published_at TEXT,
-            summary TEXT,
-            sentiment TEXT,
-            alerted BOOLEAN DEFAULT FALSE,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+    # Add API key to URL for authentication
+    separator = '&' if '?' in url else '?'
+    url_with_key = f"{url}{separator}key={FIREBASE_API_KEY}"
     
-    conn.commit()
-    conn.close()
-    print("✅ SQLite database initialized successfully")
+    try:
+        if method == 'GET':
+            response = requests.get(url_with_key, headers=headers, timeout=10)
+        elif method == 'POST':
+            response = requests.post(url_with_key, headers=headers, json=data, timeout=10)
+        elif method == 'PATCH':
+            response = requests.patch(url_with_key, headers=headers, json=data, timeout=10)
+        else:
+            raise ValueError(f"Unsupported method: {method}")
+        
+        response.raise_for_status()
+        
+        if response.content:
+            return response.json()
+        else:
+            return {}
+        
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Firestore API error: {e}")
+        return {}
 
-def insert_article(title, description, source, link, published_at, summary=None, sentiment=None):
-    """Insert a new article into the database with debug logging"""
+def firestore_value(value):
+    """Convert Python value to Firestore value format"""
+    if value is None:
+        return {"nullValue": None}
+    elif isinstance(value, str):
+        return {"stringValue": value}
+    elif isinstance(value, int):
+        return {"integerValue": str(value)}
+    elif isinstance(value, bool):
+        return {"booleanValue": value}
+    else:
+        return {"stringValue": str(value)}
+
+def parse_firestore_doc(doc: Dict) -> Dict:
+    """Parse Firestore document to Python dict"""
+    if not doc or 'fields' not in doc:
+        return {}
+    
+    result = {}
+    for key, value_obj in doc['fields'].items():
+        if 'stringValue' in value_obj:
+            result[key] = value_obj['stringValue']
+        elif 'integerValue' in value_obj:
+            result[key] = int(value_obj['integerValue'])
+        elif 'booleanValue' in value_obj:
+            result[key] = value_obj['booleanValue']
+        elif 'nullValue' in value_obj:
+            result[key] = None
+        else:
+            result[key] = str(value_obj)
+    
+    # Add document ID
+    if 'name' in doc:
+        doc_id = doc['name'].split('/')[-1]
+        result['id'] = doc_id
+    
+    return result
+
+def insert_article(title: str, description: str, source: str, link: str, 
+                  published_at: str, summary: str = None, sentiment: str = None) -> bool:
+    """Insert a new article into Firestore with debug logging"""
     try:
         print(f"💾 DEBUG: Inserting article '{title[:50]}...' from {source}")
         
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
+        # Use link hash as document ID to prevent duplicates
+        doc_id = hashlib.md5(link.encode()).hexdigest()
         
-        cursor.execute('''
-            INSERT OR IGNORE INTO news_articles 
-            (title, description, source, link, published_at, summary, sentiment)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (title, description, source, link, published_at, summary, sentiment))
+        # Create document data in Firestore format
+        doc_data = {
+            "fields": {
+                "title": firestore_value(title),
+                "description": firestore_value(description),
+                "source": firestore_value(source),
+                "link": firestore_value(link),
+                "published_at": firestore_value(published_at),
+                "summary": firestore_value(summary),
+                "sentiment": firestore_value(sentiment),
+                "alerted": firestore_value(False),
+                "created_at": firestore_value(datetime.now(timezone.utc).isoformat())
+            }
+        }
         
-        if cursor.rowcount > 0:
-            print(f"✅ Insert succeeded: 1 record added")
-            conn.commit()
-            conn.close()
+        url = get_firestore_url("articles", doc_id)
+        result = make_firestore_request("PATCH", url, doc_data)
+        
+        if result and 'name' in result:
+            print(f"✅ Insert succeeded: Article stored in Firestore")
             return True
         else:
-            print(f"📋 Article already exists (duplicate link)")
-            conn.close()
+            print(f"❌ Insert failed: No valid response from Firestore")
             return False
             
     except Exception as e:
         print(f"❌ Exception during insert_article: {e}")
         return False
 
-def get_recent_articles(limit=50):
-    """Get recent articles from database with debug logging"""
+def get_recent_articles(limit: int = 50) -> List[Dict]:
+    """Get recent articles from Firestore with debug logging"""
     try:
-        print(f"📚 DEBUG: Querying SQLite for {limit} recent articles...")
+        print(f"📚 DEBUG: Querying Firestore for {limit} recent articles...")
         
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row  # Enable dict-like access
-        cursor = conn.cursor()
+        url = get_firestore_url("articles")
+        params = f"?pageSize={limit}&orderBy=published_at desc"
         
-        cursor.execute('''
-            SELECT * FROM news_articles 
-            ORDER BY published_at DESC 
-            LIMIT ?
-        ''', (limit,))
+        result = make_firestore_request("GET", url + params)
         
-        rows = cursor.fetchall()
-        articles = [dict(row) for row in rows]
+        if not result or 'documents' not in result:
+            print(f"📚 No articles found in Firestore")
+            return []
         
-        print(f"📚 Retrieved {len(articles)} articles from SQLite database")
-        conn.close()
+        articles = []
+        for doc in result['documents']:
+            article = parse_firestore_doc(doc)
+            if article:
+                articles.append(article)
+        
+        print(f"📚 Retrieved {len(articles)} articles from Firestore")
         return articles
         
     except Exception as e:
         print(f"❌ Exception during get_recent_articles: {e}")
         return []
 
-def check_article_exists(link):
-    """Check if article already exists in database with debug logging"""
+def check_article_exists(link: str) -> bool:
+    """Check if article already exists in Firestore with debug logging"""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
+        # Use link hash as document ID
+        doc_id = hashlib.md5(link.encode()).hexdigest()
         
-        cursor.execute('SELECT COUNT(*) FROM news_articles WHERE link = ?', (link,))
-        exists = cursor.fetchone()[0] > 0
+        url = get_firestore_url("articles", doc_id)
+        result = make_firestore_request("GET", url)
         
+        exists = bool(result and 'name' in result)
         print(f"🔎 Article exists check for '{link[:50]}...': {exists}")
-        conn.close()
         return exists
         
     except Exception as e:
         print(f"❌ Exception during check_article_exists: {e}")
         return False
 
-def update_article_summary(article_id, summary, sentiment):
-    """Update article with AI-generated summary and sentiment with debug logging"""
+def update_article_summary(article_id: str, summary: str, sentiment: str) -> bool:
+    """Update article with AI-generated summary and sentiment"""
     try:
-        print(f"🤖 DEBUG: Updating article {article_id} with AI summary and sentiment")
+        print(f"🤖 DEBUG: Updating article {article_id} with AI summary")
         
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
+        update_data = {
+            "fields": {
+                "summary": firestore_value(summary),
+                "sentiment": firestore_value(sentiment)
+            }
+        }
         
-        cursor.execute('''
-            UPDATE news_articles 
-            SET summary = ?, sentiment = ? 
-            WHERE id = ?
-        ''', (summary, sentiment, article_id))
+        url = get_firestore_url("articles", article_id)
+        result = make_firestore_request("PATCH", url, update_data)
         
-        if cursor.rowcount > 0:
+        if result and 'name' in result:
             print(f"✅ Article {article_id} summary updated successfully")
-            conn.commit()
-            conn.close()
             return True
         else:
-            print(f"❌ No article found with ID {article_id}")
-            conn.close()
+            print(f"❌ Failed to update article {article_id}")
             return False
             
     except Exception as e:
         print(f"❌ Exception during update_article_summary: {e}")
         return False
 
-def get_unalerted_articles():
-    """Get articles that haven't been alerted yet with debug logging"""
+def get_unalerted_articles() -> List[Dict]:
+    """Get articles that haven't been alerted yet"""
     try:
         print(f"📢 DEBUG: Querying for unalerted articles...")
         
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        # Get all articles and filter in Python (simpler than complex Firestore queries)
+        all_articles = get_recent_articles(1000)
+        unalerted = [
+            article for article in all_articles 
+            if not article.get('alerted', False) and article.get('sentiment') != 'Neutral'
+        ]
         
-        cursor.execute('''
-            SELECT * FROM news_articles 
-            WHERE alerted = FALSE AND sentiment != 'Neutral'
-            ORDER BY published_at DESC
-        ''')
-        
-        rows = cursor.fetchall()
-        articles = [dict(row) for row in rows]
-        
-        print(f"📢 Found {len(articles)} unalerted articles")
-        conn.close()
-        return articles
+        print(f"📢 Found {len(unalerted)} unalerted articles")
+        return unalerted
         
     except Exception as e:
         print(f"❌ Exception during get_unalerted_articles: {e}")
         return []
 
-def mark_article_alerted(article_id):
-    """Mark article as alerted with debug logging"""
+def mark_article_alerted(article_id: str) -> bool:
+    """Mark article as alerted"""
     try:
         print(f"📱 DEBUG: Marking article {article_id} as alerted")
         
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
+        update_data = {
+            "fields": {
+                "alerted": firestore_value(True)
+            }
+        }
         
-        cursor.execute('''
-            UPDATE news_articles 
-            SET alerted = TRUE 
-            WHERE id = ?
-        ''', (article_id,))
+        url = get_firestore_url("articles", article_id)
+        result = make_firestore_request("PATCH", url, update_data)
         
-        if cursor.rowcount > 0:
+        if result and 'name' in result:
             print(f"✅ Article {article_id} marked as alerted")
-            conn.commit()
-            conn.close()
             return True
         else:
-            print(f"❌ No article found with ID {article_id}")
-            conn.close()
+            print(f"❌ Failed to mark article {article_id} as alerted")
             return False
             
     except Exception as e:
         print(f"❌ Exception during mark_article_alerted: {e}")
         return False
 
-def test_database_connection():
-    """Test database connection and operations for debugging"""
+def test_database_connection() -> bool:
+    """Test Firestore connection and operations"""
     try:
-        print("🔍 Testing SQLite database connection...")
+        print("🔍 Testing Firebase Firestore connection...")
         
-        # Initialize database
-        init_database()
+        # Check environment variables
+        print(f"🔑 FIREBASE_PROJECT_ID exists: {bool(FIREBASE_PROJECT_ID)}")
+        print(f"🔑 FIREBASE_API_KEY exists: {bool(FIREBASE_API_KEY)}")
+        
+        if not FIREBASE_PROJECT_ID or not FIREBASE_API_KEY:
+            print("❌ Missing Firebase credentials in environment")
+            return False
         
         # Test basic query
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute('SELECT COUNT(*) FROM news_articles')
-        count = cursor.fetchone()[0]
-        conn.close()
+        url = get_firestore_url("articles")
+        result = make_firestore_request("GET", url + "?pageSize=1")
         
-        print(f"📊 Connection successful - found {count} existing articles")
+        if 'documents' in result:
+            count = len(result.get('documents', []))
+            print(f"📊 Connection successful - found {count} sample articles")
+        elif 'error' in result:
+            print(f"❌ Connection failed: {result['error']}")
+            return False
+        else:
+            print(f"📊 Connection successful - empty collection")
         
         # Test insert with cleanup
-        test_article_data = {
+        test_article = {
             'title': f'Test Article {datetime.now().strftime("%H:%M:%S")}',
             'description': 'Test description',
             'source': 'Test Source',
             'link': f'https://test.com/{datetime.now().timestamp()}',
-            'published_at': datetime.now().isoformat()
+            'published_at': datetime.now(timezone.utc).isoformat()
         }
         
-        result = insert_article(**test_article_data)
+        success = insert_article(**test_article)
         
-        if result:
+        if success:
             print(f"✅ Test insert successful")
-            
-            # Clean up test data
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            cursor.execute('DELETE FROM news_articles WHERE source = "Test Source"')
-            conn.commit()
-            conn.close()
-            print("🧹 Test data cleaned up")
-            
             return True
         else:
             print(f"❌ Test insert failed")
@@ -230,9 +284,7 @@ def test_database_connection():
     except Exception as e:
         print(f"❌ Database connection test failed: {e}")
         return False
-
-# Initialize database on import
-init_database()
+        
 
         
       
